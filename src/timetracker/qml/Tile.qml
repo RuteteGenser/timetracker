@@ -19,7 +19,10 @@ Item {
     function clock(s) {
         return pad(Math.floor(s / 3600)) + ":" + pad(Math.floor(s / 60) % 60) + ":" + pad(s % 60)
     }
-    function hm(s) {
+    // Under an hour show minutes and seconds, so even a short timer visibly adds up.
+    function span(s) {
+        if (s < 3600)
+            return Math.floor(s / 60) + "m " + pad(s % 60) + "s"
         return Math.floor(s / 3600) + "h " + pad(Math.floor(s / 60) % 60) + "m"
     }
 
@@ -59,6 +62,16 @@ Item {
             wrapMode: Text.NoWrap
         }
 
+        Text {   // static marker: no animation, the Pi should stay idle
+            visible: root.running
+            anchors { left: parent.left; right: parent.right; top: parent.top
+                      margins: 24 * root.u; topMargin: 112 * root.u }
+            text: "\u25cf RUNNING"
+            color: "#ffffff"
+            font.pixelSize: 24 * root.u
+            font.bold: true
+        }
+
         Text {
             visible: root.running
             anchors.centerIn: parent
@@ -72,37 +85,21 @@ Item {
         Text {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom
                       margins: 24 * root.u }
-            text: "Today  " + root.hm(root.today)
+            text: "Today  " + root.span(root.today)
             color: root.running ? "#ffffff" : "#aab2bf"
             font.pixelSize: 28 * root.u
             elide: Text.ElideRight
         }
     }
 
-    Rectangle {   // pulsing ring on the running tile
-        visible: root.running
-        anchors.fill: body
-        anchors.margins: 6 * root.u
-        radius: body.radius - 6 * root.u
-        color: "transparent"
-        border.color: "#ffffff"
-        border.width: 5 * root.u
-        SequentialAnimation on opacity {
-            running: root.running
-            loops: Animation.Infinite
-            NumberAnimation { from: 1.0; to: 0.2; duration: 700; easing.type: Easing.InOutSine }
-            NumberAnimation { from: 0.2; to: 1.0; duration: 700; easing.type: Easing.InOutSine }
-        }
-    }
-
     Rectangle {   // selection outline
         visible: root.selected
         anchors.fill: body
-        anchors.margins: -5 * root.u
-        radius: body.radius + 5 * root.u
+        anchors.margins: -8 * root.u
+        radius: body.radius + 8 * root.u
         color: "transparent"
         border.color: "#ffffff"
-        border.width: 5 * root.u
+        border.width: 6 * root.u
     }
 
     MouseArea { anchors.fill: parent; onClicked: root.tapped() }

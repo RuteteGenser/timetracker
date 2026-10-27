@@ -88,3 +88,15 @@ test("dayBounds spans the local day", () => {
   assert.ok(start <= ts && ts < end);
   assert.equal(new Date(start * 1000).getHours(), 0);
 });
+
+test("store: stop returns the finished entry and notes can be saved", () => {
+  let t = 1_700_000_000;
+  const s = new Store(memory(), () => t);
+  s.start(s.projects()[0].id);
+  t += 90;
+  const done = s.stop();
+  assert.equal(done.end - done.start, 90);
+  assert.equal(s.stop(), null);
+  s.setNote(done.id, "  wrote tests  ");
+  assert.equal(s.data.entries[0].note, "wrote tests");
+});

@@ -23,10 +23,10 @@ from timetracker.inputs import make_input
 
 
 @pytest.fixture
-def ui(db):
+def ui(db, clock):
     app = QGuiApplication.instance() or QGuiApplication([])
     app_module.seed_starter_projects(db)
-    ctl = Controller(db)
+    ctl = Controller(db, clock=clock)
     knob = make_input(Config(), app)
     knob.turned.connect(ctl.turn)
     knob.pressed.connect(ctl.press)
@@ -66,8 +66,58 @@ def test_arrows_and_space_start_and_stop(ui):
     key(window, Qt.Key.Key_Space)  # starting another project stops the first
     assert db.running().project_id != first.project_id
     assert db.get_entry(first.id).end_ts is not None
+    assert ctl.notePromptOpen      # ...and asks what was done in the first one
+    key(window, Qt.Key.Key_Space)  # Skip is outlined by default: one press dismisses
+    assert not ctl.notePromptOpen
     key(window, Qt.Key.Key_Space)  # press again: stop
     assert db.running() is None
+    assert ctl.notePromptOpen
+    key(window, Qt.Key.Key_Space)
+    assert not ctl.notePromptOpen
+
+
+def test_stopping_asks_for_a_note_and_saves_it(ui):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)          # start project 1
+    key(window, Qt.Key.Key_Space)          # stop it
+    entry = db.entries_between(0, 2**40)[0]
+    assert ctl.notePromptOpen and ctl.noteFocus == 0 and ctl.noteProject == "Work"
+    ctl.noteType("Fixed ")
+    ctl.noteType("bug")
+    key(window, Qt.Key.Key_Right)          # knob: move to Save
+    assert ctl.noteFocus == 1
+    key(window, Qt.Key.Key_Space)
+    assert not ctl.notePromptOpen
+    assert db.get_entry(entry.id).note == "Fixed bug"
+
+
+def test_skipping_leaves_note_empty_and_backspace_works(ui):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)
+    ctl.noteType("ab")
+    ctl.noteBackspace()
+    assert ctl.noteText == "a"
+    key(window, Qt.Key.Key_Space)          # Skip
+    assert db.entries_between(0, 2**40)[0].note == ""
+
+
+def test_note_prompt_blocks_the_strip(ui):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)
+    selected = ctl.selected
+    ctl.tap(5)                             # tapping a tile behind the prompt does nothing
+    assert db.running() is None and ctl.selected == selected
+
+
+def test_todays_total_grows_after_stop(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)
+    clock.advance(42)
+    key(window, Qt.Key.Key_Space)
+    ctl._refresh_times()
+    assert ctl.projects.data(ctl.projects.index(0), ctl.projects.TodayRole) == 42
 
 
 def test_left_reaches_style_then_settings_and_back(ui):

@@ -79,9 +79,20 @@ export class Store {
     return entry;
   }
 
+  /** Stop the running timer. Returns the finished entry, or null if nothing ran. */
   stop() {
+    const run = this.running();
     this.#stopRunning(this.now());
     this.#save();
+    return run;
+  }
+
+  setNote(entryId, note) {
+    const e = this.data.entries.find((x) => x.id === entryId);
+    if (e) {
+      e.note = note.trim();
+      this.#save();
+    }
   }
 
   /** Seconds per project within [start, end), clipping entries at the edges. */

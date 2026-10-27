@@ -29,11 +29,11 @@ Item {
     Rectangle {
         visible: root.selected
         anchors.fill: body
-        anchors.margins: -5 * root.u
-        radius: body.radius + 5 * root.u
+        anchors.margins: -8 * root.u
+        radius: body.radius + 8 * root.u
         color: "transparent"
         border.color: "#ffffff"
-        border.width: 5 * root.u
+        border.width: 6 * root.u
     }
 
     MouseArea { anchors.fill: parent; onClicked: root.tapped() }

@@ -70,4 +70,9 @@ Window {
             note: "Coming in a later milestone. Press the button to go back."
         }
     }
+
+    NotePrompt {
+        anchors.fill: parent
+        visible: ctl.notePromptOpen
+    }
 }
