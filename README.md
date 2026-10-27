@@ -24,13 +24,26 @@ Everything is also tappable with the mouse or touchscreen. Settings live in
 `config.toml`; data is stored in a SQLite file (`~/.local/share/timetracker/` by
 default, or `--db PATH`).
 
+## Run in a browser (GitHub Pages)
+
+`docs/` holds a plain HTML/JS version of the same screen. It needs no build step
+and no server: open `docs/index.html` through any static web server
+(`python3 -m http.server -d docs`) or publish the `docs/` folder with GitHub Pages.
+
+- Keys, mouse wheel and taps work like the knob and button.
+- Data is stored in that browser only (localStorage), written on every change; a
+  running timer survives a page reload. It is separate from the Pi's database.
+- Its strip logic mirrors `src/timetracker/nav.py`; the real device app is the
+  Python one.
+
 ## Tests
 
 ```bash
 pytest
 ```
 
-The UI smoke tests run headless (`QT_QPA_PLATFORM=offscreen`).
+The UI smoke tests run headless (`QT_QPA_PLATFORM=offscreen`). The browser
+version has its own tests: `node --test tests/web/nav.test.mjs`.
 
 ## Design notes
 
