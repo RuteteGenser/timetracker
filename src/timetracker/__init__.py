@@ -1,0 +1,1 @@
+"""Offline desk time tracker."""

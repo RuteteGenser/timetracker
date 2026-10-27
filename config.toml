@@ -1,0 +1,21 @@
+# Time tracker settings. Everything here is optional; these are the defaults.
+
+[input]
+# "sim": arrow keys turn the knob, space presses the button (for PC development)
+# "gpio": rotary encoder and push button on the Raspberry Pi header
+driver = "sim"
+
+[gpio]
+# BCM GPIO numbers (see docs/wiring.md)
+encoder_a = 17   # CLK, physical pin 11
+encoder_b = 27   # DT,  physical pin 13
+button = 22      # physical pin 15
+
+[storage]
+path = "~/.local/share/timetracker/timetracker.db"
+
+[display]
+fullscreen = false
+hide_cursor = false
+width = 1280
+height = 720

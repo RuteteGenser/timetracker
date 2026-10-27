@@ -1,0 +1,26 @@
+[project]
+name = "timetracker"
+version = "0.1.0"
+description = "Offline desk time tracker with a knob, a button and a touchscreen"
+requires-python = ">=3.11"
+dependencies = ["PySide6-Essentials>=6.5"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+pi = ["gpiozero", "lgpio"]
+
+[project.scripts]
+timetracker = "timetracker.app:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+timetracker = ["qml/*.qml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
