@@ -10,23 +10,23 @@ Window {
     title: "Time Tracker"
     visibility: cfgFullscreen ? Window.FullScreen : Window.Windowed
 
-    // Layout: the left column and four tiles exactly fill the width.
+    // Layout: five equal slots fill the width: the Settings/Style column and four project cards.
     readonly property real u: height / 720
-    readonly property real colW: width * 200 / 1280
-    readonly property real tileW: (width - colW) / 4
+    readonly property real tileW: width / 5
+    readonly property real colW: tileW
 
     Item {
         id: mainScreen
         anchors.fill: parent
         visible: ctl.screen === "main"
 
-        // The strip: [Settings/Style column][tile][tile]... slides left as a whole.
-        // View offset 0 shows the column; offset n >= 1 puts project n at the left edge.
+        // The strip: [Settings/Style column][card][card]... slides left as a whole.
+        // View offset n = number of slots scrolled off to the left.
         Item {
             id: strip
             height: parent.height
-            width: win.colW + ctl.projectCount * win.tileW
-            x: -(ctl.viewOffset === 0 ? 0 : win.colW + ctl.viewOffset * win.tileW)
+            width: (ctl.projectCount + 1) * win.tileW
+            x: -ctl.viewOffset * win.tileW
             Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
             Column {
@@ -47,7 +47,7 @@ Window {
             Repeater {
                 model: projects
                 Tile {
-                    x: win.colW + index * win.tileW
+                    x: (index + 1) * win.tileW
                     width: win.tileW
                     height: strip.height
                     projectName: model.projectName

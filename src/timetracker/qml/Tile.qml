@@ -77,17 +77,17 @@ Item {
             anchors.centerIn: parent
             text: root.clock(root.elapsed)
             color: "#ffffff"
-            font.pixelSize: 42 * root.u
+            font.pixelSize: 38 * root.u
             font.bold: true
             font.family: "monospace"
         }
 
         Text {
             anchors { left: parent.left; right: parent.right; bottom: parent.bottom
-                      margins: 24 * root.u }
-            text: "Today  " + root.span(root.today)
+                      margins: 20 * root.u }
+            text: "Today " + root.span(root.today)
             color: root.running ? "#ffffff" : "#aab2bf"
-            font.pixelSize: 28 * root.u
+            font.pixelSize: 25 * root.u
             elide: Text.ElideRight
         }
     }

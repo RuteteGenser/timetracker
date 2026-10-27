@@ -11,17 +11,23 @@ def test_default_view():
     assert n.offset == 0
 
 
-def test_clockwise_moves_right_and_slides_after_fourth_tile():
+def test_scrolling_starts_when_the_fourth_item_is_selected():
+    """Items: 1 = Settings/Style column, 2 = project 1 (Work), 3 = project 2 (Admin), 4 = project 3 (Learning)."""
     n = nav()
+    n.move(1)                                   # Admin, the 3rd item
+    assert (n.selected - FIRST_PROJECT, n.offset) == (1, 0)
+    n.move(1)                                   # Learning, the 4th item: the strip starts to move
+    assert (n.selected - FIRST_PROJECT, n.offset) == (2, 1)
+
+
+def test_clockwise_keeps_scrolling_one_card_per_step():
+    n = nav(7)
     seen = []
     for _ in range(6):
         n.move(1)
         seen.append((n.selected - FIRST_PROJECT, n.offset))
-    # selecting projects 2,3,4 (index 1,2,3) does not scroll; 5 (index 4) does
-    assert seen[:3] == [(1, 0), (2, 0), (3, 0)]
-    assert seen[3] == (4, 1)
-    assert seen[4] == (5, 2)
-    assert seen[5] == (6, 3)
+    # last offset is project_count + 1 - 5 = 3, so the end of the list is reached at offset 3
+    assert seen == [(1, 0), (2, 1), (3, 2), (4, 3), (5, 3), (6, 3)]
 
 
 def test_stops_at_last_project():
@@ -46,23 +52,18 @@ def test_scrolling_back_brings_the_column_back():
     for _ in range(6):
         n.move(1)
     assert n.offset == 3
-    for _ in range(3):
-        n.move(-1)
-        assert n.offset == 3 or n.offset == n.selected - FIRST_PROJECT
-    # selection at project index 3 (still inside window 3..6), keep going left
     while n.selected > STYLE:
         n.move(-1)
     assert n.offset == 0
 
 
-def test_view_stays_still_while_selection_moves_inside_window():
-    n = nav()
-    for _ in range(4):
-        n.move(1)          # now at index 4, offset 1
-    assert n.offset == 1
-    n.move(-1)
-    n.move(-1)             # index 2, still inside tiles 1..4
-    assert n.offset == 1
+def test_every_selection_is_visible():
+    for count in range(0, 12):
+        n = nav(count)
+        for step in [1] * (count + 3) + [-1] * (count + 4):
+            n.move(step)
+            slot = 0 if n.selected < FIRST_PROJECT else n.selected - FIRST_PROJECT + 1
+            assert n.offset <= slot < n.offset + 5
 
 
 def test_select_returns_whether_state_changed():
@@ -71,11 +72,11 @@ def test_select_returns_whether_state_changed():
     assert n.select(FIRST_PROJECT + 1) is True
 
 
-def test_few_projects_never_scroll():
-    n = nav(3)
+def test_four_projects_fit_without_scrolling():
+    n = nav(4)
     for _ in range(5):
         n.move(1)
-    assert n.offset == 0 and n.selected == FIRST_PROJECT + 2
+    assert n.offset == 0 and n.selected == FIRST_PROJECT + 3
 
 
 def test_no_projects():

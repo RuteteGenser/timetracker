@@ -62,7 +62,7 @@ def test_arrows_and_space_start_and_stop(ui):
     assert first is not None
     for _ in range(4):
         key(window, Qt.Key.Key_Right)
-    assert ctl.selected == 6 and ctl.viewOffset == 1
+    assert ctl.selected == 6 and ctl.viewOffset == 2
     key(window, Qt.Key.Key_Space)  # starting another project stops the first
     assert db.running().project_id != first.project_id
     assert db.get_entry(first.id).end_ts is not None

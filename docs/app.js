@@ -5,8 +5,7 @@
 import { StripNav, SETTINGS, STYLE, FIRST_PROJECT } from "./nav.js";
 import { Store, dayBounds } from "./store.js";
 
-const COL_W = 200;
-const TILE_W = 270;
+const SLOT_W = 256; // five equal slots across the 1280 px screen
 
 const store = new Store();
 const nav = new StripNav(store.projects().length);
@@ -32,7 +31,7 @@ for (const p of store.projects()) {
   strip.appendChild(el);
   tiles.push({ project: p, el, timer: el.querySelector(".timer"), today: el.querySelector(".today") });
 }
-strip.style.width = `${COL_W + tiles.length * TILE_W}px`;
+strip.style.width = `${(tiles.length + 1) * SLOT_W}px`;
 
 // -- rendering ----------------------------------------------------------------
 
@@ -61,8 +60,7 @@ function renderNav() {
   btnSettings.classList.toggle("selected", nav.selected === SETTINGS);
   btnStyle.classList.toggle("selected", nav.selected === STYLE);
   tiles.forEach((t, i) => t.el.classList.toggle("selected", nav.selected === FIRST_PROJECT + i));
-  const x = nav.offset === 0 ? 0 : COL_W + nav.offset * TILE_W;
-  strip.style.transform = `translateX(${-x}px)`;
+  strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
   overlay.classList.toggle("on", screen !== "main");
   document.getElementById("overlay-title").textContent = screen === "style" ? "Style" : "Settings";
 }

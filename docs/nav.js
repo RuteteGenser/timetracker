@@ -2,17 +2,20 @@
 // Mirrors src/timetracker/nav.py; keep the two in sync.
 //
 // Linear item order, left to right: Settings, Style, project 1, project 2, ...
+// The screen is split into equal slots: slot 0 is the Settings/Style column, slot k is
+// project k. Five slots are visible; `offset` is the first visible slot.
 
 export const SETTINGS = 0;
 export const STYLE = 1;
 export const FIRST_PROJECT = 2;
-export const VISIBLE_TILES = 4;
+export const VISIBLE_SLOTS = 5;
+export const SCROLL_AT = 3; // selecting the 4th visible slot starts scrolling
 
 export class StripNav {
   constructor(projectCount = 0) {
     this.projectCount = projectCount;
     this.selected = this.#default();
-    this.offset = 0; // index of the leftmost visible project; 0 also shows the column
+    this.offset = 0; // first visible slot; 0 shows the Settings/Style column
   }
 
   #default() {
@@ -51,13 +54,11 @@ export class StripNav {
   }
 
   #follow() {
-    if (this.selected < FIRST_PROJECT) {
-      this.offset = 0;
-      return;
-    }
-    const k = this.selected - FIRST_PROJECT;
-    if (k < this.offset) this.offset = k;
-    else if (k > this.offset + VISIBLE_TILES - 1) this.offset = k - VISIBLE_TILES + 1;
-    this.offset = Math.max(0, Math.min(this.offset, this.projectCount - VISIBLE_TILES));
+    const slot = this.selected < FIRST_PROJECT ? 0 : this.selected - FIRST_PROJECT + 1;
+    let offset = this.offset;
+    if (slot < offset) offset = slot;
+    else if (slot - offset >= SCROLL_AT) offset = slot - SCROLL_AT + 1;
+    const lastOffset = Math.max(0, this.projectCount + 1 - VISIBLE_SLOTS);
+    this.offset = Math.max(0, Math.min(offset, lastOffset));
   }
 }

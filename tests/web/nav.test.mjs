@@ -13,11 +13,19 @@ test("default view selects the first project", () => {
   assert.deepEqual([n.selected, n.offset], [FIRST_PROJECT, 0]);
 });
 
-test("clockwise slides only after the fourth tile", () => {
+test("scrolling starts when the 4th item (Learning) is selected", () => {
+  const n = new StripNav(7);
+  n.move(1); // Admin, 3rd item
+  assert.deepEqual([n.selected - FIRST_PROJECT, n.offset], [1, 0]);
+  n.move(1); // Learning, 4th item
+  assert.deepEqual([n.selected - FIRST_PROJECT, n.offset], [2, 1]);
+});
+
+test("clockwise keeps scrolling one card per step until the end", () => {
   const n = new StripNav(7);
   const seen = [];
   for (let i = 0; i < 6; i++) { n.move(1); seen.push([n.selected - FIRST_PROJECT, n.offset]); }
-  assert.deepEqual(seen, [[1, 0], [2, 0], [3, 0], [4, 1], [5, 2], [6, 3]]);
+  assert.deepEqual(seen, [[1, 0], [2, 1], [3, 2], [4, 3], [5, 3], [6, 3]]);
 });
 
 test("counter-clockwise reaches Style then Settings, no wrap", () => {
@@ -34,10 +42,22 @@ test("scrolling back brings the column back", () => {
   assert.equal(n.offset, 0);
 });
 
-test("few projects never scroll", () => {
-  const n = new StripNav(3);
+test("the selection is always visible", () => {
+  for (let count = 0; count < 12; count++) {
+    const n = new StripNav(count);
+    const steps = [...Array(count + 3).fill(1), ...Array(count + 4).fill(-1)];
+    for (const step of steps) {
+      n.move(step);
+      const slot = n.selected < FIRST_PROJECT ? 0 : n.selected - FIRST_PROJECT + 1;
+      assert.ok(n.offset <= slot && slot < n.offset + 5);
+    }
+  }
+});
+
+test("four projects fit without scrolling", () => {
+  const n = new StripNav(4);
   for (let i = 0; i < 5; i++) n.move(1);
-  assert.deepEqual([n.selected, n.offset], [FIRST_PROJECT + 2, 0]);
+  assert.deepEqual([n.selected, n.offset], [FIRST_PROJECT + 3, 0]);
 });
 
 test("store: start, switch, stop, persist", () => {

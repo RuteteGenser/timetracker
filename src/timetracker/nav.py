@@ -3,19 +3,23 @@
 Linear item order, left to right: Settings, Style, project 1, project 2, ...
 Settings and Style are stacked in one column on screen; the knob steps through
 them as two separate items.
+
+The screen is split into equal slots: slot 0 is the Settings/Style column,
+slot k is project k. Five slots are visible; `offset` is the first visible slot.
 """
 
 SETTINGS = 0
 STYLE = 1
 FIRST_PROJECT = 2
-VISIBLE_TILES = 4
+VISIBLE_SLOTS = 5
+SCROLL_AT = 3  # selecting the 4th visible slot starts scrolling (a card is always visible ahead)
 
 
 class StripNav:
     def __init__(self, project_count: int = 0):
         self.project_count = project_count
         self.selected = self._default()
-        self.offset = 0  # index of the leftmost visible project; 0 also shows the column
+        self.offset = 0  # first visible slot; 0 shows the Settings/Style column
 
     def _default(self) -> int:
         return FIRST_PROJECT if self.project_count else SETTINGS
@@ -49,13 +53,12 @@ class StripNav:
         self._follow()
 
     def _follow(self) -> None:
-        """Slide the view only when the selection would leave the visible tiles."""
-        if self.selected < FIRST_PROJECT:
-            self.offset = 0
-            return
-        k = self.selected - FIRST_PROJECT
-        if k < self.offset:
-            self.offset = k
-        elif k > self.offset + VISIBLE_TILES - 1:
-            self.offset = k - VISIBLE_TILES + 1
-        self.offset = max(0, min(self.offset, self.project_count - VISIBLE_TILES))
+        """Scroll when the selection reaches the 4th visible slot, or leaves on the left."""
+        slot = 0 if self.selected < FIRST_PROJECT else self.selected - FIRST_PROJECT + 1
+        offset = self.offset
+        if slot < offset:
+            offset = slot
+        elif slot - offset >= SCROLL_AT:
+            offset = slot - SCROLL_AT + 1
+        last_offset = max(0, self.project_count + 1 - VISIBLE_SLOTS)
+        self.offset = max(0, min(offset, last_offset))
