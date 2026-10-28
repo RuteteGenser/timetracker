@@ -5,6 +5,7 @@
 
 import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
 import { Store, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
+import { KINDS, periodBounds, shiftPeriod, stepLimits, summary } from "./summaries.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
 // Style screen: column items Back and Archived, then four parts per card in the order the knob
@@ -27,7 +28,7 @@ const SCREEN_PARENT = { // where Back goes
 };
 const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu"]);
 const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check", archived: "Archived projects" };
-const PLACEHOLDER_TITLES = { reports: "Reports", status: "Status" };
+const PLACEHOLDER_TITLES = { status: "Status" };
 let clockProblem = ""; // message of the clock warning being shown
 let returnTo = null; // where Back from Date & time goes, if not Settings
 let list = new ListNav(0);
@@ -153,7 +154,9 @@ function renderNav() {
   strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
   const isList = LIST_SCREENS.has(screen);
   document.getElementById("list").classList.toggle("on", isList);
-  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && screen !== "datetime" && !isList);
+  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && screen !== "datetime" && screen !== "reports" && !isList);
+  document.getElementById("rep").classList.toggle("on", screen === "reports");
+  if (screen === "reports") renderRep();
   document.getElementById("dt").classList.toggle("on", screen === "datetime");
   if (screen === "datetime") renderDt();
   document.getElementById("overlay-title").textContent = PLACEHOLDER_TITLES[screen] ?? "";
@@ -265,6 +268,11 @@ function turn(steps) {
     if (dt.editing) dtAdjust(dt.focus, steps);
     else dt.focus = Math.max(0, Math.min(DT_SAVE, dt.focus + steps));
     renderNav();
+    return;
+  }
+  if (screen === "reports") {
+    if (rep.stepping) repStep(steps);
+    else { rep.focus = Math.max(0, Math.min(REP_ITEMS - 1, rep.focus + steps)); renderNav(); }
     return;
   }
   if (screen !== "main" && screen !== "style") return;
@@ -381,7 +389,7 @@ function menuDelete() {
 function activate(index) {
   if (screen === "style") activateStyle(index);
   else if (index === SETTINGS) openScreen("settings");
-  else if (index === REPORTS) openScreen("reports");
+  else if (index === REPORTS) openReports();
   else if (index === STYLE) {
     useNav(newStyleNav());
     screen = "style";
@@ -409,6 +417,7 @@ function press() {
   if (note) [noteDelete, noteSkip, noteSave][note.focus]();
   else if (LIST_SCREENS.has(screen)) { activateList(list.selected); renderNav(); }
   else if (screen === "datetime") dtPress();
+  else if (screen === "reports") repPress();
   else if (screen !== "main" && screen !== "style") back(); // placeholder screens: any press goes back
   else activate(nav.selected);
 }
@@ -426,6 +435,128 @@ function tap(index) {
   nav.select(index);
   if (nav.selected !== before) resetArmed = null;
   activate(index);
+}
+
+// -- reports ----------------------------------------------------------------------------------
+
+// Focusable items left to right: Back, Day, Week, Month, and the period itself. Pressing the period
+// starts "stepping": turn = older / newer period, press again to stop.
+const REP_BACK = 0;
+const REP_PERIOD = 4;
+const REP_ITEMS = 5;
+let rep = { kind: "day", anchor: 0, focus: REP_PERIOD, stepping: false, data: null, limits: [0, 0] };
+
+function openReports() {
+  rep = { kind: "day", anchor: store.now(), focus: REP_PERIOD, stepping: false, data: null, limits: [0, 0] };
+  repRefresh();
+  screen = "reports";
+}
+
+function repRefresh() {
+  const now = store.now();
+  rep.data = summary(store, rep.kind, rep.anchor, now);
+  rep.limits = stepLimits(store, rep.kind, now);
+}
+
+/** Move to an older (negative) or newer (positive) period, never past the first entry or today. */
+function repStep(steps) {
+  const [oldest, current] = rep.limits;
+  rep.anchor = Math.max(oldest, Math.min(current, shiftPeriod(rep.anchor, rep.kind, steps)));
+  repRefresh();
+  renderNav();
+}
+
+/** Change Day / Week / Month. The moment being looked at stays, unless the new kind's limits force it inside. */
+function repSetKind(kind) {
+  rep.kind = kind;
+  rep.limits = stepLimits(store, kind, store.now());
+  const start = periodBounds(rep.anchor, kind)[0];
+  if (start < rep.limits[0]) rep.anchor = rep.limits[0];
+  else if (start > rep.limits[1]) rep.anchor = rep.limits[1];
+  repRefresh();
+}
+
+function repPressItem(item) {
+  if (item === REP_BACK) back();
+  else if (item < REP_PERIOD) repSetKind(KINDS[item - 1]);
+}
+
+function repPress() {
+  if (rep.focus < REP_PERIOD) repPressItem(rep.focus);
+  else rep.stepping = !rep.stepping;
+  renderNav();
+}
+
+function repTap(item) {
+  rep.stepping = item === REP_PERIOD && rep.focus === item ? !rep.stepping : false;
+  rep.focus = item;
+  repPressItem(item);
+  if (screen === "reports") renderNav();
+}
+
+function renderRep() {
+  const d = rep.data;
+  const controls = document.getElementById("rep-controls");
+  controls.replaceChildren();
+  const key = (label, cls, onClick) => {
+    const k = document.createElement("div");
+    k.className = `key ${cls}`;
+    k.textContent = label;
+    k.addEventListener("click", onClick);
+    return k;
+  };
+  controls.appendChild(key("Back", rep.focus === 0 ? "focus" : "", () => repTap(0)));
+  ["Day", "Week", "Month"].forEach((label, i) => {
+    controls.appendChild(key(label, `${rep.kind === KINDS[i] ? "active" : ""} ${rep.focus === i + 1 ? "focus" : ""}`, () => repTap(i + 1)));
+  });
+  controls.appendChild(key("\u25c0", `arrow ${d.start > rep.limits[0] ? "" : "dim"}`, () => repStep(-1)));
+  const period = document.createElement("div");
+  period.className = `rperiod ${rep.stepping ? "stepping" : ""} ${rep.focus === REP_PERIOD ? "focus" : ""}`;
+  period.textContent = d.label;
+  period.addEventListener("click", () => repTap(REP_PERIOD));
+  controls.appendChild(period);
+  controls.appendChild(key("\u25b6", `arrow ${d.start < rep.limits[1] ? "" : "dim"}`, () => repStep(1)));
+
+  document.getElementById("rep-total-val").textContent = repSpan(d.total);
+  const chart = document.getElementById("rep-chart");
+  chart.replaceChildren();
+  if (d.total === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Nothing tracked in this period";
+    chart.appendChild(empty);
+    return;
+  }
+  const max = Math.max(1, ...d.rows.map((r) => r.seconds));
+  const rowH = Math.min(64, chart.clientHeight / Math.max(1, d.rows.length));
+  const barW = chart.clientWidth - 250 - 170 - 20;
+  for (const r of d.rows) {
+    const row = document.createElement("div");
+    row.className = "rrow";
+    row.style.height = `${rowH}px`;
+    row.innerHTML = '<div class="rname"></div><div class="rbar"></div><div class="rval"></div>';
+    const name = row.querySelector(".rname");
+    name.textContent = r.name + (r.archived ? " (archived)" : "");
+    name.classList.toggle("archived", r.archived);
+    const bar = row.querySelector(".rbar");
+    bar.style.background = r.color;
+    bar.style.height = `${Math.min(rowH * 0.62, 40)}px`;
+    bar.style.width = `${r.seconds > 0 ? Math.max(6, (barW * r.seconds) / max) : 0}px`;
+    const val = row.querySelector(".rval");
+    val.textContent = repSpan(r.seconds);
+    val.style.left = `${250 + barW + 20}px`;
+    val.classList.toggle("zero", r.seconds === 0);
+    chart.appendChild(row);
+  }
+}
+
+// Under an hour show minutes and seconds; from an hour up, hours and minutes.
+function repSpan(s) {
+  if (s <= 0) return "\u2013";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (s < 3600) return `${m}m ${pad(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${pad(m % 60)}m`;
 }
 
 // -- clock: sanity check and the Date & time screen ---------------------------------------
@@ -713,5 +844,10 @@ let lastSecond = store.now();
 runClockCheck();
 setInterval(() => {
   const s = store.now();
-  if (s !== lastSecond) { lastSecond = s; renderTimes(); heartbeat(s); }
+  if (s !== lastSecond) {
+    lastSecond = s;
+    renderTimes();
+    heartbeat(s);
+    if (screen === "reports") { repRefresh(); renderNav(); } // a running timer keeps today's numbers moving
+  }
 }, 200);

@@ -133,11 +133,16 @@ Window {
         visible: ctl.screen === "datetime"
     }
 
+    ReportScreen {
+        anchors.fill: parent
+        visible: ctl.screen === "reports"
+    }
+
     Loader {   // screens that are not built yet
         anchors.fill: parent
-        active: ctl.screen !== "main" && ctl.screen !== "style" && ctl.screen !== "datetime" && !ctl.screenIsList
+        active: ctl.screen !== "main" && ctl.screen !== "style" && ctl.screen !== "datetime" && ctl.screen !== "reports" && !ctl.screenIsList
         sourceComponent: Placeholder {
-            title: ctl.screen === "reports" ? "Reports" : "Status"
+            title: "Status"
             note: "Coming soon. Press the button to go back."
         }
     }

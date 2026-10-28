@@ -156,13 +156,16 @@ def test_settings_rows_open_screens_and_back_goes_up_one_level(ui):
     assert ctl.screen == "settings"
 
 
-def test_reports_button_opens_reports(ui):
+def test_reports_button_opens_reports_and_back_item_leaves(ui):
     ctl, window, _ = ui
     key(window, Qt.Key.Key_Left)
     key(window, Qt.Key.Key_Space)
     assert ctl.screen == "reports"
+    for _ in range(4):
+        key(window, Qt.Key.Key_Left)       # Period -> Month -> Week -> Day -> Back
+    assert ctl.repFocus == 0
     key(window, Qt.Key.Key_Space)
-    assert ctl.screen == "main"
+    assert ctl.screen == "main" and ctl.selected == 3
 
 
 def test_tapping_list_rows(ui):
@@ -724,3 +727,126 @@ def test_new_project_shows_up_on_the_main_screen(ui):
     ctl.tap(0)                                    # Back
     assert ctl.screen == "main" and ctl.projectCount == 7
     assert ctl.projects.data(ctl.projects.index(6), ctl.projects.NameRole) == "Reading"
+
+
+# -- Reports --------------------------------------------------------------------------------------------
+
+def open_reports(window, ctl=None):
+    if ctl is not None:
+        ctl.tap(2)                          # the Reports column item, wherever the selection is
+        return
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)
+
+
+def track(window, clock, seconds):
+    """Start the first project, let `seconds` pass, stop it and skip the note."""
+    key(window, Qt.Key.Key_Space)
+    clock.advance(seconds)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)
+
+
+def rep_seconds(ctl):
+    return {r["name"]: r["seconds"] for r in ctl.repRows}
+
+
+def test_reports_opens_on_today_with_the_period_focused(ui):
+    ctl, window, _ = ui
+    open_reports(window)
+    assert (ctl.repKind, ctl.repLabel, ctl.repFocus, ctl.repStepping) == ("day", "Today", 4, False)
+    assert ctl.repTotal == 0 and [r["name"] for r in ctl.repRows][:2] == ["Work", "Admin"]
+    assert not ctl.repCanOlder and not ctl.repCanNewer
+
+
+def test_reports_show_the_tracked_time_per_project_and_the_total(ui, clock):
+    ctl, window, _ = ui
+    track(window, clock, 600)                           # Work, 10 min
+    key(window, Qt.Key.Key_Right)                       # Admin
+    key(window, Qt.Key.Key_Space)
+    clock.advance(300)                                  # Admin, 5 min
+    key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)
+    open_reports(window, ctl)
+    assert rep_seconds(ctl)["Work"] == 600 and rep_seconds(ctl)["Admin"] == 300
+    assert ctl.repTotal == 900 == sum(r["seconds"] for r in ctl.repRows)
+
+
+def test_stepping_to_older_periods_stops_at_the_first_entry_and_at_today(ui, clock):
+    ctl, window, db = ui
+    track(window, clock, 600)                           # today
+    clock.advance(2 * 86400)                            # two days later
+    track(window, clock, 120)
+    open_reports(window, ctl)
+    assert ctl.repLabel == "Today" and ctl.repCanOlder and not ctl.repCanNewer
+    key(window, Qt.Key.Key_Space)                       # start stepping
+    assert ctl.repStepping
+    key(window, Qt.Key.Key_Left)
+    assert ctl.repLabel == "Yesterday" and ctl.repTotal == 0
+    key(window, Qt.Key.Key_Left)                        # the day with the first entry
+    assert rep_seconds(ctl)["Work"] == 600 and not ctl.repCanOlder
+    key(window, Qt.Key.Key_Left)                        # nothing older: stays
+    assert rep_seconds(ctl)["Work"] == 600
+    for _ in range(5):
+        key(window, Qt.Key.Key_Right)                   # clamps at today
+    assert ctl.repLabel == "Today" and not ctl.repCanNewer
+    key(window, Qt.Key.Key_Space)                       # stop stepping
+    assert not ctl.repStepping
+
+
+def test_week_and_month_kinds_sum_several_days(ui, clock):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    clock.advance(86400)
+    track(window, clock, 300)
+    open_reports(window, ctl)
+    ctl.repTap(1)
+    assert ctl.repTotal == 300                          # the day view only has today's entry
+    ctl.repTap(2)
+    assert ctl.repKind == "week" and ctl.repLabel.startswith("This week") and ctl.repTotal == 900
+    ctl.repTap(3)
+    assert ctl.repKind == "month" and ctl.repTotal == 900
+
+
+def test_the_period_label_for_a_week_covers_monday_to_sunday(ui):
+    ctl, window, _ = ui
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)
+    assert ctl.repKind == "week" and "\u2013" in ctl.repLabel
+
+
+def test_a_running_timer_keeps_todays_numbers_moving(ui, clock):
+    ctl, window, _ = ui
+    key(window, Qt.Key.Key_Space)                       # start Work
+    open_reports(window, ctl)
+    clock.advance(90)
+    ctl._on_tick()
+    assert rep_seconds(ctl)["Work"] == 90 and ctl.repTotal == 90
+
+
+def test_reports_touch_controls(ui, clock):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    clock.advance(86400)
+    track(window, clock, 60)
+    open_reports(window, ctl)
+    ctl.repTap(2)                                       # Week
+    assert ctl.repKind == "week"
+    ctl.repTap(1)                                       # Day
+    assert ctl.repKind == "day" and ctl.repLabel == "Today"
+    ctl.repStep(-1)
+    assert ctl.repLabel == "Yesterday" and rep_seconds(ctl)["Work"] == 600
+    ctl.repStep(+1)
+    assert ctl.repLabel == "Today"
+    ctl.repTap(0)                                       # Back
+    assert ctl.screen == "main"
+
+
+def test_changing_kind_keeps_the_period_inside_the_limits(ui, clock):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_reports(window, ctl)
+    ctl.repStep(-5)                                     # no older day exists
+    assert ctl.repLabel == "Today"
+    ctl.repTap(3)                                       # Month
+    assert ctl.repKind == "month" and not ctl.repCanOlder and not ctl.repCanNewer

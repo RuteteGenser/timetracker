@@ -61,7 +61,7 @@ Item {
             height: 100 * root.u
             wrapMode: Text.WordWrap
             fontSizeMode: Text.Fit    // a long name gets smaller until it fits the card
-            minimumPixelSize: 12 * root.u
+            minimumPixelSize: Math.max(1, 12 * root.u)
             verticalAlignment: Text.AlignTop
         }
 

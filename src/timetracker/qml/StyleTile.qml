@@ -59,7 +59,7 @@ Item {
             height: parent.height - 100 * root.u   // leaves room for the "Rename" caption
             wrapMode: Text.WordWrap
             fontSizeMode: Text.Fit    // a long name gets smaller until it fits the part
-            minimumPixelSize: 12 * root.u
+            minimumPixelSize: Math.max(1, 12 * root.u)
             verticalAlignment: Text.AlignTop
         }
         Text {

@@ -126,3 +126,27 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .addtile .cap { position: absolute; bottom: 40px; font-size: 28px; color: #aab2bf; }
 .lrow.danger { background: #d9363e; }
 .lrow.armed { background: #8b1a1f; }
+
+/* Reports: Back, Day, Week, Month and the period on top, the total, then one bar per project */
+#rep { position: absolute; inset: 0; background: #101216; display: none; }
+#rep.on { display: block; }
+#rep-controls { position: absolute; left: 15px; right: 15px; top: 15px; display: flex; gap: 12px; }
+#rep-controls .key { flex: none; width: 150px; height: 76px; }
+#rep-controls .key.active { background: #3274d1; }
+#rep-controls .key.arrow { width: 76px; }
+#rep-controls .key.dim { opacity: .35; }
+.rperiod { position: relative; flex: 1; height: 76px; border-radius: 4px; background: #1f232b; font-size: 30px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; white-space: nowrap; overflow: hidden; padding: 0 10px; }
+.rperiod.stepping { background: #3274d1; }
+.rperiod.focus::before { content: ""; position: absolute; inset: 0; border: 6px solid #fff; border-radius: 4px; pointer-events: none; }
+#rep-total { position: absolute; left: 23px; top: 111px; display: flex; align-items: baseline; gap: 20px; }
+#rep-total .lbl { font-size: 30px; color: #aab2bf; }
+#rep-total-val { font-size: 56px; font-weight: 700; }
+#rep-chart { position: absolute; left: 15px; right: 15px; top: 205px; bottom: 15px; }
+#rep-chart .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #6b7380; }
+.rrow { position: relative; display: flex; align-items: center; }
+.rrow .rname { flex: none; width: 250px; padding-left: 8px; font-size: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rrow .rname.archived { color: #aab2bf; }
+.rrow .rbar { flex: none; height: 40px; border-radius: 3px; min-width: 0; }
+.rrow .rval { position: absolute; right: 0; width: 170px; font-size: 28px; }
+.rrow .rval.zero { color: #6b7380; }

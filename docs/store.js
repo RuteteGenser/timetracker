@@ -218,6 +218,11 @@ export class Store {
     }
   }
 
+  /** The start of the oldest entry, or null if there are no entries. */
+  earliestTimestamp() {
+    return this.data.entries.length ? Math.min(...this.data.entries.map((e) => e.start)) : null;
+  }
+
   /** The newest start or end time of any entry, 0 if there are none. */
   latestTimestamp() {
     return this.data.entries.reduce((m, e) => Math.max(m, e.start, e.end ?? 0), 0);

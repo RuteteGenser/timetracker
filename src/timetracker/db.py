@@ -268,6 +268,10 @@ class Database:
         )
         return {r["project_id"]: r["secs"] for r in rows}
 
+    def earliest_timestamp(self) -> int | None:
+        """The start of the oldest entry, or None if there are no entries."""
+        return self._conn.execute("SELECT MIN(start_ts) FROM entries").fetchone()[0]
+
     def latest_timestamp(self) -> int:
         """The newest start or end time of any entry, 0 if there are none."""
         row = self._conn.execute("SELECT MAX(start_ts), MAX(end_ts) FROM entries").fetchone()

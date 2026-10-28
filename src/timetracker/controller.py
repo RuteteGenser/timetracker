@@ -12,6 +12,7 @@ from .colors import COLOR_CYCLE, next_color
 from .db import Database, Entry
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
+from .summaries import KINDS, period_bounds, shift_period, step_limits, summary
 from .timeutil import day_bounds
 
 # Text prompt buttons, left to right; the knob button presses the focused one.
@@ -47,11 +48,18 @@ DT_CANCEL = 5
 DT_SAVE = 6
 HEARTBEAT_SECONDS = 60
 
+# Reports screen: focusable items left to right. Back, the three period kinds, and the period itself:
+# pressing the period starts "stepping", where the knob moves to older / newer periods.
+REP_BACK = 0
+REP_PERIOD = 4
+REP_ITEMS = 5
+
 
 class Controller(QObject):
     selectedChanged = Signal()
     listChanged = Signal()
     dtChanged = Signal()
+    repChanged = Signal()
     viewOffsetChanged = Signal()
     screenChanged = Signal()
     projectCountChanged = Signal()
@@ -76,6 +84,12 @@ class Controller(QObject):
         self._dt_error = ""
         self._last_seen = int(db.get_meta(LAST_SEEN) or 0)
         self._last_beat = 0
+        self._rep_kind = "day"
+        self._rep_anchor = 0  # any moment inside the period being shown
+        self._rep_focus = REP_PERIOD
+        self._rep_stepping = False
+        self._rep_data: dict = {"label": "", "total": 0, "rows": []}
+        self._rep_limits = (0, 0)
         self._last_second = -1
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
@@ -168,6 +182,39 @@ class Controller(QObject):
     def dtError(self):
         return self._dt_error
 
+    @Property(str, notify=repChanged)
+    def repKind(self):
+        return self._rep_kind
+
+    @Property(str, notify=repChanged)
+    def repLabel(self):
+        return self._rep_data["label"]
+
+    @Property(int, notify=repChanged)
+    def repTotal(self):
+        return self._rep_data["total"]
+
+    @Property("QVariantList", notify=repChanged)
+    def repRows(self):
+        return [{"name": r["name"], "color": r["color"], "seconds": r["seconds"], "archived": r["archived"]}
+                for r in self._rep_data["rows"]]
+
+    @Property(int, notify=repChanged)
+    def repFocus(self):
+        return self._rep_focus
+
+    @Property(bool, notify=repChanged)
+    def repStepping(self):
+        return self._rep_stepping
+
+    @Property(bool, notify=repChanged)
+    def repCanOlder(self):
+        return self._rep_data.get("start", 0) > self._rep_limits[0]
+
+    @Property(bool, notify=repChanged)
+    def repCanNewer(self):
+        return self._rep_data.get("start", 0) < self._rep_limits[1]
+
     @Property(bool, notify=resetArmedChanged)
     def resetArmed(self):
         return self._reset_armed_index is not None and self._reset_armed_index == self._nav.selected
@@ -245,6 +292,8 @@ class Controller(QObject):
         if now != self._last_second:
             self._refresh_times()
             self._heartbeat(now)
+            if self._screen == "reports":
+                self._rep_refresh()  # a running timer keeps today's numbers moving
 
     # -- navigation -------------------------------------------------------------
 
@@ -358,6 +407,13 @@ class Controller(QObject):
                 self._dt_focus = max(0, min(DT_SAVE, self._dt_focus + steps))
             self.dtChanged.emit()
             return
+        if self._screen == "reports":
+            if self._rep_stepping:
+                self._rep_step(steps)
+            else:
+                self._rep_focus = max(0, min(REP_ITEMS - 1, self._rep_focus + steps))
+                self.repChanged.emit()
+            return
         if self._screen not in ("main", "style"):
             return
         before = (self._nav.selected, self._nav.offset)
@@ -373,6 +429,8 @@ class Controller(QObject):
             self._activate_list(self._list.selected)
         elif self._screen == "datetime":
             self._dt_press()
+        elif self._screen == "reports":
+            self._rep_press()
         elif self._screen not in ("main", "style"):
             self.back()  # placeholder screens: any press goes back
         else:
@@ -412,7 +470,7 @@ class Controller(QObject):
         elif index == SETTINGS:
             self._open_screen("settings")
         elif index == REPORTS:
-            self._open_screen("reports")
+            self._open_reports()
         elif index == STYLE:
             self._use_nav(self._new_style_nav())
             self._set_screen("style")
@@ -741,3 +799,71 @@ class Controller(QObject):
         self._clock_problem = ""
         self._refresh_times()
         self.back()
+
+    # -- reports ----------------------------------------------------------------------------------
+
+    def _open_reports(self) -> None:
+        self._rep_kind = "day"
+        self._rep_anchor = int(self._clock())
+        self._rep_focus = REP_PERIOD
+        self._rep_stepping = False
+        self._rep_refresh()
+        self._set_screen("reports")
+
+    def _rep_refresh(self) -> None:
+        now = int(self._clock())
+        self._rep_data = summary(self._db, self._rep_kind, self._rep_anchor, now)
+        self._rep_limits = step_limits(self._db, self._rep_kind, now)
+        self.repChanged.emit()
+
+    def _rep_step(self, steps: int) -> None:
+        """Move to an older (negative) or newer (positive) period, never past the first entry or today."""
+        oldest, current = self._rep_limits
+        start = shift_period(self._rep_anchor, self._rep_kind, steps)
+        self._rep_anchor = max(oldest, min(current, start))
+        self._rep_refresh()
+
+    def _rep_set_kind(self, kind: str) -> None:
+        """Change Day / Week / Month. The moment being looked at stays, unless the new kind's
+        limits (a month reaches back fewer steps than days) force it inside them."""
+        self._rep_kind = kind
+        self._rep_limits = step_limits(self._db, kind, int(self._clock()))
+        oldest, current = self._rep_limits
+        start = period_bounds(self._rep_anchor, kind)[0]
+        if start < oldest:
+            self._rep_anchor = oldest
+        elif start > current:
+            self._rep_anchor = current
+        self._rep_refresh()
+
+    def _rep_press(self) -> None:
+        if self._rep_focus == REP_BACK:
+            self.back()
+        elif self._rep_focus < REP_PERIOD:
+            self._rep_set_kind(KINDS[self._rep_focus - 1])
+        else:
+            self._rep_stepping = not self._rep_stepping
+            self.repChanged.emit()
+
+    @Slot(int)
+    def repTap(self, item: int) -> None:
+        """Touch: tap Back, Day, Week, Month, or the period label (which starts or ends stepping)."""
+        if self._screen != "reports" or not 0 <= item < REP_ITEMS:
+            return
+        self._rep_stepping = (not self._rep_stepping) if (item == REP_PERIOD and self._rep_focus == item) else False
+        self._rep_focus = item
+        self._rep_press_item(item)
+
+    def _rep_press_item(self, item: int) -> None:
+        if item == REP_BACK:
+            self.back()
+        elif item < REP_PERIOD:
+            self._rep_set_kind(KINDS[item - 1])
+        else:
+            self.repChanged.emit()
+
+    @Slot(int)
+    def repStep(self, steps: int) -> None:
+        """Touch: the arrows beside the period label."""
+        if self._screen == "reports":
+            self._rep_step(steps)
