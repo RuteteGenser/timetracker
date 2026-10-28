@@ -58,9 +58,11 @@ Item {
             color: "#ffffff"
             font.pixelSize: 36 * root.u
             font.bold: true
-            wrapMode: Text.Wrap       // a long name wraps onto a second line
-            maximumLineCount: 2
-            elide: Text.ElideRight
+            height: 100 * root.u
+            wrapMode: Text.WordWrap
+            fontSizeMode: Text.Fit    // a long name gets smaller until it fits the card
+            minimumPixelSize: 12 * root.u
+            verticalAlignment: Text.AlignTop
         }
 
         Text {   // static marker: no animation, the Pi should stay idle

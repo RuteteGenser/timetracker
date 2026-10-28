@@ -53,9 +53,11 @@ Item {
             color: "#ffffff"
             font.pixelSize: 34 * root.u
             font.bold: true
-            wrapMode: Text.Wrap
-            maximumLineCount: 3
-            elide: Text.ElideRight
+            height: parent.height - 100 * root.u   // leaves room for the "Rename" caption
+            wrapMode: Text.WordWrap
+            fontSizeMode: Text.Fit    // a long name gets smaller until it fits the part
+            minimumPixelSize: 12 * root.u
+            verticalAlignment: Text.AlignTop
         }
         Text {
             anchors { left: parent.left; bottom: parent.bottom; margins: 20 * root.u }

@@ -63,12 +63,29 @@ const span = (s) => s < 3600
   : `${Math.floor(s / 3600)}h ${pad(Math.floor(s / 60) % 60)}m`;
 const spanShort = (s) => (s < 60 ? `${s}s` : span(s));
 
+// Shrink a name until it fits its box (wrapping at spaces; a single long word just gets smaller).
+function fitText(el, minPx = 12) {
+  el.style.fontSize = "";
+  let size = parseFloat(getComputedStyle(el).fontSize);
+  while (size > minPx && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
+    size -= 1;
+    el.style.fontSize = `${size}px`;
+  }
+}
+
+function fitNames() { // only visible names can be measured, so this runs again when the screen changes
+  for (const t of tiles) {
+    for (const el of [t.el.querySelector(".name"), t.pname]) if (el.offsetParent !== null) fitText(el);
+  }
+}
+
 function renderTiles() { // names and colours
   for (const t of tiles) {
     t.el.style.setProperty("--c", t.project.color);
     t.el.querySelector(".name").textContent = t.project.name;
     t.pname.textContent = t.project.name;
   }
+  fitNames();
 }
 
 function renderTimes() {
@@ -86,9 +103,12 @@ function renderTimes() {
   }
 }
 
+let fittedFor = null;
+
 function renderNav() {
   const [card, part] = nav.cardAndPart();
   stage.classList.toggle("style-mode", screen === "style");
+  if (fittedFor !== screen) { fittedFor = screen; fitNames(); }
   btnSettings.classList.toggle("selected", screen === "main" && nav.selected === SETTINGS);
   btnStyle.classList.toggle("selected", screen === "main" && nav.selected === STYLE);
   btnBack.classList.toggle("selected", screen === "style" && nav.selected === 0);
