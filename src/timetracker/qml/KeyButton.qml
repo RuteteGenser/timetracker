@@ -12,7 +12,7 @@ Rectangle {
 
     signal clicked()
 
-    radius: 12 * u
+    radius: 4 * u
     color: accent ? "#2f9a58" : (danger ? "#b8434d" : (mouse.pressed ? "#4a5160" : "#2a2f39"))
 
     Text {
