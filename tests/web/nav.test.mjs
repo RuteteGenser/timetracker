@@ -407,3 +407,110 @@ test("list: a default row can be chosen", () => {
   assert.equal(new ListNav(5, 6, 3).selected, 3);
   assert.equal(new ListNav(2, 6, 9).selected, 1);
 });
+
+// -- project management ---------------------------------------------------------------------------
+
+const style4 = (n = 5) => new StripNav(n, 2, 4, 1);
+
+test("style4: default is the first card's colour; the knob visits four parts then the plus card", () => {
+  const n = style4(2);
+  assert.deepEqual([n.selected, n.cardAndPart()], [2, [0, 0]]);
+  const seen = [];
+  for (let i = 0; i < 10; i++) { seen.push(n.cardAndPart()); n.move(1); }
+  assert.deepEqual(seen.slice(0, 8), [[0, 0], [0, 1], [0, 2], [0, 3], [1, 0], [1, 1], [1, 2], [1, 3]]);
+  assert.deepEqual(seen[8], [2, 0]);
+  assert.deepEqual(seen[9], [2, 0]);
+});
+
+test("style4: left from the first part reaches Archived, then Back", () => {
+  const n = style4();
+  n.move(-1); assert.deepEqual([n.selected, n.cardAndPart()], [1, [-1, -1]]);
+  n.move(-1); assert.equal(n.selected, 0);
+  n.move(-1); assert.equal(n.selected, 0);
+});
+
+test("style4: with no projects only the plus card remains", () => {
+  const n = style4(0);
+  assert.deepEqual([n.selected, n.cardAndPart()], [2, [0, 0]]);
+  n.move(5); assert.equal(n.selected, 2);
+  n.move(-1); assert.equal(n.selected, 1);
+});
+
+test("style4: every item is visible and the plus card is reachable", () => {
+  for (let count = 0; count < 10; count++) {
+    const n = style4(count);
+    for (const step of [...Array(4 * count + 4).fill(1), ...Array(4 * count + 5).fill(-1)]) {
+      n.move(step);
+      const slot = n.cardAndPart()[0] + 1;
+      assert.ok(n.offset <= slot && slot < n.offset + 5);
+    }
+    for (let i = 0; i < 4 * count + 4; i++) n.move(1);
+    assert.deepEqual(n.cardAndPart(), [count, 0]);
+  }
+});
+
+test("style4: the plus card counts as a slot for scrolling", () => {
+  let n = style4(3);
+  for (let i = 0; i < 12; i++) n.move(1);
+  assert.deepEqual([n.cardAndPart(), n.offset], [[3, 0], 0]);
+  n = style4(4);
+  for (let i = 0; i < 16; i++) n.move(1);
+  assert.deepEqual([n.cardAndPart(), n.offset], [[4, 0], 1]);
+});
+
+const names = (s) => s.projects().map((p) => p.name);
+
+test("moveProject swaps with the visible neighbour and stops at the ends", () => {
+  const s = new Store(memory(), () => T0);
+  const first = names(s);
+  const [a, b] = s.projects();
+  assert.equal(s.moveProject(a.id, -1), false);
+  assert.equal(s.moveProject(b.id, -1), true);
+  assert.deepEqual(names(s).slice(0, 2), [first[1], first[0]]);
+  const last = s.projects().at(-1);
+  assert.equal(s.moveProject(last.id, 1), false);
+});
+
+test("moveProject skips archived neighbours and restore returns to the old place", () => {
+  const s = new Store(memory(), () => T0);
+  const [a, b, c] = s.projects();
+  s.archiveProject(b.id);
+  assert.equal(s.moveProject(c.id, -1), true);
+  assert.deepEqual(names(s).slice(0, 2), [c.name, a.name]);
+  s.archiveProject(b.id, false);
+  assert.deepEqual(names(s).slice(0, 3), [c.name, b.name, a.name]);
+});
+
+test("archiveProject stops that project's timer; archivedProjects lists only archived", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  const [a, b] = s.projects();
+  s.start(a.id); state.t += 30;
+  s.archiveProject(a.id);
+  assert.equal(s.running(), null);
+  assert.deepEqual(s.archivedProjects().map((p) => p.id), [a.id]);
+  assert.ok(!s.projects().some((p) => p.id === a.id));
+  s.archiveProject(a.id, false);
+  assert.deepEqual(s.archivedProjects(), []);
+});
+
+test("deleteProject removes the project and its entries", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  const [a, b] = s.projects();
+  s.start(a.id); state.t += 60; s.stop();
+  s.start(b.id); state.t += 60; s.stop();
+  s.deleteProject(a.id);
+  assert.ok(!s.projects().some((p) => p.id === a.id));
+  assert.deepEqual(s.data.entries.map((e) => e.projectId), [b.id]);
+});
+
+test("changes to projects persist", () => {
+  const storage = memory();
+  const s = new Store(storage, () => T0);
+  const a = s.projects()[0];
+  s.archiveProject(a.id);
+  const again = new Store(storage, () => T0);
+  assert.ok(!again.projects().some((p) => p.id === a.id));
+  assert.equal(again.archivedProjects().length, 1);
+});

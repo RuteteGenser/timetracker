@@ -241,3 +241,42 @@ def test_reset_day_on_a_timer_that_started_yesterday_keeps_yesterdays_part(db, c
     assert db.totals(day_start - DAY, day_start) == {p: 900}   # yesterday's part stays
     assert db.running().start_ts == clock()                    # and a new timer runs from now
     assert db.totals(day_start, day_end) in ({p: 0}, {})
+
+
+# -- project order and archive ------------------------------------------------------------------
+
+def names(db):
+    return [p.name for p in db.list_projects()]
+
+
+def test_move_project_swaps_with_the_neighbour(db):
+    a, b, c = (db.add_project(n, "#1") for n in "ABC")
+    assert db.move_project(b, -1) is True
+    assert names(db) == ["B", "A", "C"]
+    assert db.move_project(b, +1) is True
+    assert names(db) == ["A", "B", "C"]
+
+
+def test_move_project_stops_at_the_ends(db):
+    a, b = db.add_project("A", "#1"), db.add_project("B", "#1")
+    assert db.move_project(a, -1) is False
+    assert db.move_project(b, +1) is False
+    assert names(db) == ["A", "B"]
+
+
+def test_move_project_skips_archived_neighbours(db):
+    a, b, c = (db.add_project(n, "#1") for n in "ABC")
+    db.archive_project(b)
+    assert db.move_project(c, -1) is True
+    assert names(db) == ["C", "A"]
+    db.archive_project(b, False)               # B comes back where its order puts it
+    assert names(db) == ["C", "B", "A"]         # sort orders were A=1 B=2 C=3, then C and A swapped
+
+
+def test_archived_projects_lists_only_archived(db):
+    a, b = db.add_project("A", "#1"), db.add_project("B", "#1")
+    assert db.archived_projects() == []
+    db.archive_project(a)
+    assert [p.name for p in db.archived_projects()] == ["A"]
+    db.archive_project(a, False)
+    assert db.archived_projects() == []

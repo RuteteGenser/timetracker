@@ -117,6 +117,26 @@ class Database:
         sql += " ORDER BY sort_order, id"
         return [self._project(r) for r in self._conn.execute(sql)]
 
+    def archived_projects(self) -> list[Project]:
+        return [p for p in self.list_projects(include_archived=True) if p.archived]
+
+    def move_project(self, project_id: int, direction: int) -> bool:
+        """Swap a project's place with its neighbour among the visible ones (-1 left, +1 right).
+        Returns False when it is already at that end."""
+        visible = self.list_projects()
+        ids = [p.id for p in visible]
+        if project_id not in ids:
+            return False
+        i = ids.index(project_id)
+        j = i + (1 if direction > 0 else -1)
+        if not 0 <= j < len(visible):
+            return False
+        a, b = visible[i], visible[j]
+        with self._tx():
+            self._conn.execute("UPDATE projects SET sort_order = ? WHERE id = ?", (b.sort_order, a.id))
+            self._conn.execute("UPDATE projects SET sort_order = ? WHERE id = ?", (a.sort_order, b.id))
+        return True
+
     def rename_project(self, project_id: int, name: str) -> None:
         name = name.strip()
         if not name:

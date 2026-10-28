@@ -31,14 +31,14 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .tile.running .timer { display: block; }
 .tile.running .today { color: #fff; }
 /* Style screen: the same strip, but every card is split into colour, name and time. */
-#btn-back { display: none; }
+#btn-back, #btn-archived { display: none; }
 .tile .parts { display: none; }
 #stage.style-mode #btn-settings, #stage.style-mode #btn-style, #stage.style-mode #btn-reports { display: none; }
-#stage.style-mode #btn-back { display: flex; }
+#stage.style-mode #btn-back, #stage.style-mode #btn-archived { display: flex; }
 #stage.style-mode .tile, #stage.style-mode .tile.running { background: none; }
-#stage.style-mode .tile > :not(.parts) { display: none; }
+#stage.style-mode .tile:not(.addtile) > :not(.parts) { display: none; }
 #stage.style-mode .tile .parts { display: flex; flex-direction: column; gap: 16px; height: 100%; }
-.part { position: relative; flex: 1; border-radius: 20px; background: #1f232b; padding: 20px; cursor: pointer;
+.part { position: relative; flex: 1 1 0; border-radius: 20px; background: #1f232b; padding: 20px; cursor: pointer;
   display: flex; flex-direction: column; font-size: 25px; color: #aab2bf; }
 .part b { font-size: 34px; color: #fff; }
 .part b.pname { display: block; flex: 1 1 0; min-height: 0; line-height: 1.15; overflow: hidden; }
@@ -117,3 +117,12 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .dtval.focus::before { content: ""; position: absolute; inset: 0; border: 6px solid #fff; border-radius: 4px; pointer-events: none; }
 #dt-buttons { position: absolute; left: 15px; bottom: 35px; display: flex; gap: 16px; }
 #dt-buttons .key { flex: none; width: 260px; height: 84px; }
+
+/* Style screen: the fourth part (More) and the "+" card */
+.part.p-more { flex: 0 0 12%; background: #2a2f39; color: #fff; align-items: center; justify-content: center; font-size: 28px; font-weight: 700; padding: 0; }
+.addtile { display: none; align-items: center; justify-content: center; flex-direction: column; }
+#stage.style-mode .addtile { display: flex; background: #1f232b; }
+.addtile .plus { font-size: 110px; font-weight: 700; margin-top: -20px; }
+.addtile .cap { position: absolute; bottom: 40px; font-size: 28px; color: #aab2bf; }
+.lrow.danger { background: #d9363e; }
+.lrow.armed { background: #8b1a1f; }

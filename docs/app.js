@@ -4,13 +4,17 @@
 // The rules mirror src/timetracker/controller.py.
 
 import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
-import { Store, dayBounds, nextColor } from "./store.js";
+import { Store, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
-const STYLE_PARTS = 3; // colour, name, time: the order the knob visits them
+// Style screen: column items Back and Archived, then four parts per card in the order the knob
+// visits them, then a trailing "+" card that adds a project.
+const STYLE_COLUMN = 2;
+const STYLE_PARTS = 4;
 const PART_COLOR = 0;
 const PART_NAME = 1;
 const PART_TIME = 2;
+const PART_MORE = 3;
 
 const store = new Store();
 const projectCount = store.projects().length;
@@ -19,15 +23,18 @@ let screen = "main"; // a key of SCREEN_PARENT, or "main"
 // Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
 const SCREEN_PARENT = { // where Back goes
   style: "main", settings: "main", reports: "main", clockwarn: "main", datetime: "settings", status: "settings",
+  projectmenu: "style", archived: "style", archivedmenu: "archived",
 };
-const LIST_SCREENS = new Set(["settings", "clockwarn"]);
-const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check" };
+const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu"]);
+const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check", archived: "Archived projects" };
 const PLACEHOLDER_TITLES = { reports: "Reports", status: "Status" };
 let clockProblem = ""; // message of the clock warning being shown
 let returnTo = null; // where Back from Date & time goes, if not Settings
 let list = new ListNav(0);
 let listRows = []; // rows of the current list screen: { id, label, value }
 let resetArmed = null; // Style item whose time reset waits for its confirming second press
+let menuPid = null; // project the open menu (More / Archived) is about
+let menuArmed = false; // Delete in that menu was pressed once and waits for confirmation
 
 const stage = document.getElementById("stage");
 const strip = document.getElementById("strip");
@@ -36,34 +43,43 @@ const btnSettings = document.getElementById("btn-settings");
 const btnStyle = document.getElementById("btn-style");
 const btnReports = document.getElementById("btn-reports");
 const btnBack = document.getElementById("btn-back");
+const btnArchived = document.getElementById("btn-archived");
+const addTile = document.getElementById("addtile");
 
 // -- build tiles --------------------------------------------------------------
 
-// Each tile holds both looks: the main one and `.parts` (colour, name, time) for the Style screen.
-const tiles = []; // { project, el, timer, today, parts: [colour, name, time], pname, pval }
-for (const p of store.projects()) {
-  const el = document.createElement("div");
-  el.className = "tile";
-  el.innerHTML =
-    '<div class="band"></div><div class="name"></div><div class="badge">● RUNNING</div>' +
-    '<div class="timer"></div><div class="today"></div>' +
-    '<div class="parts">' +
-    '<div class="part p-color"><span>Color</span></div>' +
-    '<div class="part p-name"><b class="pname"></b><span>Rename</span></div>' +
-    '<div class="part p-time"><span class="cap">Today</span><b class="pval"></b><span class="hint"></span></div>' +
-    "</div>";
-  const index = tiles.length;
-  el.addEventListener("click", () => { if (screen === "main") tap(FIRST_PROJECT + index); });
-  const parts = [...el.querySelectorAll(".part")];
-  parts.forEach((part, i) => part.addEventListener("click", () => { if (screen === "style") tap(1 + STYLE_PARTS * index + i); }));
-  strip.appendChild(el);
-  tiles.push({
-    project: p, el, parts,
-    timer: el.querySelector(".timer"), today: el.querySelector(".today"),
-    pname: el.querySelector(".pname"), pval: el.querySelector(".pval"), hint: el.querySelector(".hint"),
-  });
+// Each tile holds both looks: the main one and `.parts` (colour, name, time, More) for the Style screen.
+// The tiles are rebuilt whenever projects are added, archived, deleted or moved.
+let tiles = []; // { project, el, timer, today, parts, pname, pval, hint }
+
+function buildTiles() {
+  for (const t of tiles) t.el.remove();
+  tiles = [];
+  for (const p of store.projects()) {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML =
+      '<div class="band"></div><div class="name"></div><div class="badge">\u25cf RUNNING</div>' +
+      '<div class="timer"></div><div class="today"></div>' +
+      '<div class="parts">' +
+      '<div class="part p-color"><span>Color</span></div>' +
+      '<div class="part p-name"><b class="pname"></b><span>Rename</span></div>' +
+      '<div class="part p-time"><span class="cap">Today</span><b class="pval"></b><span class="hint"></span></div>' +
+      '<div class="part p-more">More\u2026</div>' +
+      "</div>";
+    const index = tiles.length;
+    el.addEventListener("click", () => { if (screen === "main") tap(FIRST_PROJECT + index); });
+    const parts = [...el.querySelectorAll(".part")];
+    parts.forEach((part, i) => part.addEventListener("click", () => { if (screen === "style") tap(STYLE_COLUMN + STYLE_PARTS * index + i); }));
+    strip.insertBefore(el, addTile);
+    tiles.push({
+      project: p, el, parts,
+      timer: el.querySelector(".timer"), today: el.querySelector(".today"),
+      pname: el.querySelector(".pname"), pval: el.querySelector(".pval"), hint: el.querySelector(".hint"),
+    });
+  }
+  strip.style.width = `${(tiles.length + 2) * SLOT_W}px`; // the column, the cards and the "+" card
 }
-strip.style.width = `${(tiles.length + 1) * SLOT_W}px`;
 
 // -- rendering ----------------------------------------------------------------
 
@@ -125,10 +141,12 @@ function renderNav() {
   btnStyle.classList.toggle("selected", screen === "main" && nav.selected === STYLE);
   btnReports.classList.toggle("selected", screen === "main" && nav.selected === REPORTS);
   btnBack.classList.toggle("selected", screen === "style" && nav.selected === 0);
+  btnArchived.classList.toggle("selected", screen === "style" && nav.selected === 1);
+  addTile.classList.toggle("selected", screen === "style" && card === tiles.length);
   tiles.forEach((t, i) => {
     t.el.classList.toggle("selected", screen === "main" && card === i);
     t.parts.forEach((el, p) => el.classList.toggle("selected", screen === "style" && card === i && part === p));
-    const armed = screen === "style" && resetArmed === 1 + STYLE_PARTS * i + PART_TIME && nav.selected === resetArmed;
+    const armed = screen === "style" && resetArmed === STYLE_COLUMN + STYLE_PARTS * i + PART_TIME && nav.selected === resetArmed;
     t.parts[PART_TIME].classList.toggle("armed", armed);
     t.hint.textContent = armed ? "Confirm reset" : "Reset time";
   });
@@ -143,7 +161,7 @@ function renderNav() {
 }
 
 function renderList() {
-  document.getElementById("list-title").textContent = LIST_TITLES[screen];
+  document.getElementById("list-title").textContent = listTitle();
   const note = screen === "clockwarn" ? clockProblem : "";
   document.getElementById("list-note").textContent = note;
   document.getElementById("list").classList.toggle("has-note", note !== "");
@@ -152,7 +170,7 @@ function renderList() {
   listRows.slice(list.offset, list.offset + list.visible).forEach((r, i) => {
     const index = list.offset + i;
     const el = document.createElement("div");
-    el.className = `lrow ${r.id === "back" ? "back" : ""} ${index === list.selected ? "selected" : ""}`;
+    el.className = `lrow ${r.id === "back" ? "back" : ""} ${r.kind ?? ""} ${index === list.selected ? "selected" : ""}`;
     el.innerHTML = '<span class="label"></span><span class="value"></span>';
     el.querySelector(".label").textContent = r.label;
     el.querySelector(".value").textContent = r.value;
@@ -163,8 +181,16 @@ function renderList() {
 
 // -- actions ------------------------------------------------------------------
 
+function listTitle() {
+  if (screen === "projectmenu" || screen === "archivedmenu") {
+    return store.data.projects.find((p) => p.id === menuPid)?.name ?? "";
+  }
+  return LIST_TITLES[screen];
+}
+
 function rowsFor(name) {
-  const row = (id, label, value = "") => ({ id, label, value });
+  const row = (id, label, value = "", kind = "") => ({ id, label, value, kind });
+  const del = row("delete", menuArmed ? "Confirm delete" : "Delete", "", menuArmed ? "armed" : "danger");
   if (name === "settings") {
     const d = new Date(store.now() * 1000);
     const p2 = (n) => String(n).padStart(2, "0");
@@ -172,6 +198,20 @@ function rowsFor(name) {
     return [row("back", "Back"), row("datetime", "Date & time", when), row("status", "Status")];
   }
   if (name === "clockwarn") return [row("datetime", "Set date and time"), row("ignore", "Ignore")];
+  if (name === "projectmenu") {
+    const ids = store.projects().map((p) => p.id);
+    const card = Math.max(0, ids.indexOf(menuPid));
+    const rows = [row("back", "Cancel"), row("archive", "Archive")];
+    if (card > 0) rows.push(row("moveleft", "Move left"));
+    if (card < ids.length - 1) rows.push(row("moveright", "Move right"));
+    return [...rows, del];
+  }
+  if (name === "archived") {
+    const archived = store.archivedProjects();
+    if (!archived.length) return [row("back", "Back"), row("none", "No archived projects")];
+    return [row("back", "Back"), ...archived.map((p) => row(`project:${p.id}`, p.name, "Restore or delete"))];
+  }
+  if (name === "archivedmenu") return [row("back", "Cancel"), row("restore", "Restore"), del];
   return [];
 }
 
@@ -190,6 +230,12 @@ function activateList(index) {
   if (r.id === "back") back();
   else if (r.id === "ignore") ignoreClockProblem();
   else if (r.id === "datetime") openDatetime(screen === "clockwarn" ? "main" : null);
+  else if (r.id === "archive") menuArchive();
+  else if (r.id === "moveleft" || r.id === "moveright") menuMove(r.id === "moveleft" ? -1 : 1);
+  else if (r.id === "delete") menuDelete();
+  else if (r.id === "restore") menuRestore();
+  else if (r.id.startsWith("project:")) { menuPid = Number(r.id.slice(8)); menuArmed = false; openScreen("archivedmenu"); }
+  else if (r.id === "none") return;
   else openScreen(r.id);
 }
 
@@ -200,7 +246,7 @@ function useNav(newNav) {
 
 function turn(steps) {
   if (note) {                       // in a text prompt the knob moves between its buttons
-    const lowest = note.kind === "rename" ? NOTE_SKIP : NOTE_DELETE;
+    const lowest = note.kind === "note" ? NOTE_DELETE : NOTE_SKIP; // only notes have Delete
     const focus = Math.max(lowest, Math.min(NOTE_SAVE, note.focus + steps));
     if (focus !== note.focus) note.armed = false; // moving away cancels a pending delete
     note.focus = focus;
@@ -208,7 +254,10 @@ function turn(steps) {
     return;
   }
   if (LIST_SCREENS.has(screen)) {
-    list.move(steps);
+    if (list.move(steps) && menuArmed) { // moving away cancels a pending delete
+      menuArmed = false;
+      listRows = rowsFor(screen);
+    }
     renderNav();
     return;
   }
@@ -237,10 +286,29 @@ function toggleProject(p) {
   if (finished) openNote(finished, tiles.find((t) => t.project.id === finished.projectId).project);
 }
 
+function newStyleNav() {
+  return new StripNav(nav.projectCount, STYLE_COLUMN, STYLE_PARTS, 1);
+}
+
+function selectStyle(card, part) {
+  nav.select(STYLE_COLUMN + card * STYLE_PARTS + part);
+}
+
+/** Projects were added, archived, deleted or moved: rebuild the cards. */
+function refreshProjects() {
+  buildTiles();
+  nav.setProjectCount(tiles.length);
+  renderTiles();
+  renderTimes();
+  fittedFor = null;
+}
+
 function activateStyle(index) {
-  if (index === 0) { back(); return; } // the Back button in the column
-  const card = Math.floor((index - 1) / STYLE_PARTS);
-  const part = (index - 1) % STYLE_PARTS;
+  if (index === 0) { back(); return; }               // Back
+  if (index === 1) { openScreen("archived"); return; } // Archived
+  if (index === STYLE_COLUMN + tiles.length * STYLE_PARTS) { openAdd(); return; } // the "+" card
+  const card = Math.floor((index - STYLE_COLUMN) / STYLE_PARTS);
+  const part = (index - STYLE_COLUMN) % STYLE_PARTS;
   const project = tiles[card].project;
   if (part === PART_COLOR) {
     project.color = nextColor(project.color);
@@ -248,12 +316,66 @@ function activateStyle(index) {
     renderTiles();
   } else if (part === PART_NAME) {
     openRename(project);
-  } else if (resetArmed !== index) {  // time: the first press only arms it
-    resetArmed = index;
-  } else {                            // the second press resets today's total
-    resetArmed = null;
-    store.resetToday(project.id);
+  } else if (part === PART_TIME) {
+    if (resetArmed !== index) {                      // the first press only arms it
+      resetArmed = index;
+    } else {                                         // the second press resets today's total
+      resetArmed = null;
+      store.resetToday(project.id);
+    }
+  } else {
+    menuPid = project.id;
+    menuArmed = false;
+    openScreen("projectmenu");
   }
+}
+
+// -- project menus: More (on a card) and the Archived list ----------------------------------
+
+const menuCard = () => Math.max(0, store.projects().findIndex((p) => p.id === menuPid));
+
+function leaveMenu(parent) {
+  menuArmed = false;
+  openScreen(parent);
+}
+
+function menuArchive() {
+  const card = menuCard();
+  store.archiveProject(menuPid); // also stops its timer, if it was running
+  refreshProjects();
+  leaveMenu("style");
+  selectStyle(Math.min(card, Math.max(0, tiles.length - 1)), PART_COLOR);
+}
+
+function menuMove(direction) {
+  let card = menuCard();
+  if (store.moveProject(menuPid, direction)) {
+    refreshProjects();
+    card += direction;
+  }
+  leaveMenu("style");
+  selectStyle(card, PART_MORE); // the outline follows the project, ready to move it again
+}
+
+function menuRestore() {
+  store.archiveProject(menuPid, false);
+  refreshProjects();
+  leaveMenu("archived");
+}
+
+// Delete a project and all its entries. The first press only arms it, the second does it.
+function menuDelete() {
+  if (!menuArmed) {
+    menuArmed = true;
+    listRows = rowsFor(screen);
+    return;
+  }
+  const card = menuCard();
+  const fromArchive = screen === "archivedmenu";
+  store.deleteProject(menuPid);
+  refreshProjects();
+  leaveMenu(fromArchive ? "archived" : "style");
+  if (!fromArchive) selectStyle(Math.min(card, Math.max(0, tiles.length - 1)), PART_COLOR);
 }
 
 function activate(index) {
@@ -261,7 +383,7 @@ function activate(index) {
   else if (index === SETTINGS) openScreen("settings");
   else if (index === REPORTS) openScreen("reports");
   else if (index === STYLE) {
-    useNav(new StripNav(nav.projectCount, 1, STYLE_PARTS));
+    useNav(newStyleNav());
     screen = "style";
   } else {
     const p = tiles[index - FIRST_PROJECT]?.project;
@@ -428,6 +550,13 @@ function openNote(entry, project) {
   renderNote();
 }
 
+function openAdd() {
+  note = { kind: "add", project: null, text: "", focus: NOTE_SKIP, shift: true, armed: false };
+  document.getElementById("note-title").textContent = "New project";
+  document.getElementById("note-sub").textContent = "";
+  renderNote();
+}
+
 function openRename(project) {
   note = { kind: "rename", project, text: project.name, focus: NOTE_SKIP, shift: false, armed: false };
   document.getElementById("note-title").textContent = "Rename";
@@ -441,6 +570,18 @@ function noteClose() {
 }
 
 function noteSave() {
+  if (note.kind === "add") {
+    const name = note.text.trim();
+    noteClose();
+    if (name) {
+      const last = store.projects().at(-1);
+      store.addProject(name, last ? nextColor(last.color) : COLOR_CYCLE[0]);
+      refreshProjects();
+      selectStyle(tiles.length - 1, PART_COLOR); // the new card
+    }
+    renderNav();
+    return;
+  }
   if (note.kind === "rename") {
     const name = note.text.trim();
     if (name) {
@@ -491,7 +632,7 @@ function renderNote() {
   renderTimes();
   if (!note) return;
   noteText.classList.toggle("empty", note.text === "");
-  noteText.textContent = note.text === "" ? (note.kind === "rename" ? "Name…" : "Optional note…") : note.text + "▏";
+  noteText.textContent = note.text === "" ? (note.kind !== "note" ? "Name…" : "Optional note…") : note.text + "▏";
   const keys = document.getElementById("note-keys");
   keys.replaceChildren();
   const key = (label, cls, onClick) => {
@@ -519,7 +660,7 @@ function renderNote() {
   if (note.kind === "note") {
     last.appendChild(key(note.armed ? "Confirm" : "Delete", `wide-b ${note.armed ? "armed" : "danger"} ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
   }
-  last.appendChild(key(note.kind === "rename" ? "Cancel" : "Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
+  last.appendChild(key(note.kind !== "note" ? "Cancel" : "Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
   last.appendChild(key("Save", `wide-b accent ${note.focus === NOTE_SAVE ? "focus" : ""}`, noteSave));
   keys.appendChild(last);
 }
@@ -528,6 +669,8 @@ function renderNote() {
 
 btnSettings.addEventListener("click", () => tap(SETTINGS));
 btnStyle.addEventListener("click", () => tap(STYLE));
+btnArchived.addEventListener("click", () => tap(1));
+addTile.addEventListener("click", () => { if (screen === "style") tap(STYLE_COLUMN + STYLE_PARTS * tiles.length); });
 btnReports.addEventListener("click", () => tap(REPORTS));
 btnBack.addEventListener("click", () => tap(0));
 document.getElementById("overlay-back").addEventListener("click", back);
@@ -562,6 +705,7 @@ function fit() {
 window.addEventListener("resize", fit);
 
 fit();
+buildTiles();
 renderTiles();
 renderTimes();
 renderNav();

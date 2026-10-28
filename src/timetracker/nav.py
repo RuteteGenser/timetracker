@@ -21,13 +21,16 @@ class StripNav:
     """Selection over [column items..., then `parts` items per project card].
 
     Main screen: three column items (Settings, Style, Reports), one item per card.
-    Style screen: one column item (Back), three items per card (colour, name, time).
+    Style screen: two column items (Back, Archived), four items per card (colour, name, time,
+    More) and one trailing item after the last card (the "+" card that adds a project).
+    A trailing item takes a slot of its own; its "card" index is project_count + k, part 0.
     """
 
-    def __init__(self, project_count: int = 0, column_items: int = FIRST_PROJECT, parts: int = 1):
+    def __init__(self, project_count: int = 0, column_items: int = FIRST_PROJECT, parts: int = 1, trailing: int = 0):
         self.project_count = project_count
         self.column_items = column_items
         self.parts = parts
+        self.trailing = trailing
         self.selected = self._default()
         self.offset = 0  # first visible slot; 0 shows the column
 
@@ -37,17 +40,22 @@ class StripNav:
         return self.column_items
 
     def _default(self) -> int:
-        return self.first if self.project_count else 0
+        return self.first if (self.project_count or self.trailing) else 0
 
     @property
     def last(self) -> int:
-        return self.first + self.project_count * self.parts - 1 if self.project_count else self.column_items - 1
+        if self.project_count or self.trailing:
+            return self.first + self.project_count * self.parts + self.trailing - 1
+        return self.column_items - 1
 
     def card_and_part(self) -> tuple[int, int]:
         """(card index, part) of the selection, or (-1, -1) while a column item is selected."""
         if self.selected < self.first:
             return -1, -1
-        return divmod(self.selected - self.first, self.parts)
+        i = self.selected - self.first
+        if i >= self.project_count * self.parts:  # a trailing item
+            return self.project_count + (i - self.project_count * self.parts), 0
+        return divmod(i, self.parts)
 
     def reset(self) -> None:
         """Default view: first card selected, column visible."""
@@ -82,7 +90,7 @@ class StripNav:
             offset = slot
         elif slot - offset >= SCROLL_AT:
             offset = slot - SCROLL_AT + 1
-        last_offset = max(0, self.project_count + 1 - VISIBLE_SLOTS)
+        last_offset = max(0, self.project_count + self.trailing + 1 - VISIBLE_SLOTS)
         self.offset = max(0, min(offset, last_offset))
 
 

@@ -35,7 +35,7 @@ Window {
         Item {
             id: strip
             height: parent.height
-            width: (ctl.projectCount + 1) * win.tileW
+            width: (ctl.projectCount + 2) * win.tileW   // the column, the cards and the plus card
             x: -ctl.viewOffset * win.tileW
             Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
@@ -60,11 +60,20 @@ Window {
                 }
             }
 
-            ColumnButton {   // style screen: one Back button
+            Column {   // style screen: Back and Archived
                 visible: ctl.screen === "style"
-                width: win.colW; height: parent.height; u: win.u
-                label: "Back"; selected: ctl.selected === 0
-                onTapped: ctl.tap(0)
+                width: win.colW
+                height: parent.height
+                ColumnButton {
+                    width: parent.width; height: parent.height / 2; u: win.u
+                    label: "Back"; selected: ctl.selected === 0
+                    onTapped: ctl.tap(0)
+                }
+                ColumnButton {
+                    width: parent.width; height: parent.height / 2; u: win.u
+                    label: "Archived"; selected: ctl.selected === 1
+                    onTapped: ctl.tap(1)
+                }
             }
 
             Repeater {
@@ -84,7 +93,7 @@ Window {
                 }
             }
 
-            // Style screen: every card is split into colour, name and time.
+            // Style screen: every card is split into colour, name, time and More.
             Repeater {
                 model: ctl.screen === "style" ? projects : 0
                 StyleTile {
@@ -97,8 +106,18 @@ Window {
                     today: model.today
                     selectedPart: ctl.selectedCard === index ? ctl.selectedPart : -1
                     resetArmed: ctl.resetArmed && ctl.selectedCard === index
-                    onPartTapped: (part) => ctl.tap(1 + 3 * index + part)
+                    onPartTapped: (part) => ctl.tap(ctl.styleBase + ctl.styleParts * index + part)
                 }
+            }
+
+            AddTile {   // the plus card: adds a project
+                visible: ctl.screen === "style"
+                x: (ctl.projectCount + 1) * win.tileW
+                width: win.tileW
+                height: strip.height
+                u: win.u
+                selected: ctl.screen === "style" && ctl.selectedCard === ctl.projectCount
+                onTapped: ctl.tap(ctl.styleBase + ctl.styleParts * ctl.projectCount)
             }
         }
         }

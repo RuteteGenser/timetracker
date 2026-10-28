@@ -260,14 +260,14 @@ def test_style_opens_on_first_cards_color_part(ui):
     assert (ctl.selectedCard, ctl.selectedPart) == (0, 0)
 
 
-def test_style_knob_visits_the_three_parts_of_each_card(ui):
+def test_style_knob_visits_the_four_parts_of_each_card(ui):
     ctl, window, _ = ui
     enter_style(window)
     seen = []
-    for _ in range(5):
+    for _ in range(6):
         seen.append((ctl.selectedCard, ctl.selectedPart))
         key(window, Qt.Key.Key_Right)
-    assert seen == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+    assert seen == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1)]
 
 
 def test_style_color_part_cycles_through_eight_colors(ui):
@@ -356,7 +356,9 @@ def test_style_moving_away_cancels_a_pending_reset(ui, clock):
 def test_style_back_button_returns_to_the_default_main_view(ui):
     ctl, window, _ = ui
     enter_style(window)
-    key(window, Qt.Key.Key_Left)                 # first part -> Back
+    key(window, Qt.Key.Key_Left)                 # first part -> Archived
+    assert ctl.selected == 1 and ctl.selectedCard == -1
+    key(window, Qt.Key.Key_Left)                 # -> Back
     assert ctl.selected == 0 and ctl.selectedCard == -1
     key(window, Qt.Key.Key_Space)
     assert ctl.screen == "main" and ctl.selected == 3 and ctl.viewOffset == 0
@@ -367,9 +369,9 @@ def test_style_tapping_parts(ui):
     ctl.tap(1)                                   # Style column item
     assert ctl.screen == "style"
     before = color_of(ctl, 1)
-    ctl.tap(1 + 3 * 1 + 0)                       # card 2, colour part
+    ctl.tap(ctl.styleBase + ctl.styleParts * 1 + 0)   # card 2, colour part
     assert color_of(ctl, 1) != before and ctl.selectedCard == 1 and ctl.selectedPart == 0
-    ctl.tap(1 + 3 * 1 + 1)                       # card 2, name part
+    ctl.tap(ctl.styleBase + ctl.styleParts * 1 + 1)   # card 2, name part
     assert ctl.noteKind == "rename" and ctl.noteText == "Admin"
 
 
@@ -530,3 +532,195 @@ def test_heartbeat_moves_forward_only_and_a_jump_back_while_running_warns(ui, cl
     ctl._heartbeat(clock())
     assert db.get_meta("last_seen") == str(seen)   # the reference was not dragged back
     assert ctl.screen == "clockwarn" and "behind" in ctl.listNote
+
+
+# -- project management on the Style screen -------------------------------------------------------
+
+def to_more(window, card=0):
+    """From the Style screen's first item to the More part of a card."""
+    for _ in range(card * 4 + 3):
+        key(window, Qt.Key.Key_Right)
+
+
+def row_ids(ctl):
+    return [r["id"] for r in ctl.listRows]
+
+
+def project_names(db):
+    return [p.name for p in db.list_projects()]
+
+
+def test_more_opens_a_menu_without_move_left_for_the_first_card(ui):
+    ctl, window, _ = ui
+    enter_style(window)
+    to_more(window)
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "projectmenu" and ctl.screenIsList and ctl.listTitle == "Work"
+    assert row_ids(ctl) == ["back", "archive", "moveright", "delete"]
+    assert ctl.listSelected == 1
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)                 # Cancel
+    assert ctl.screen == "style" and (ctl.selectedCard, ctl.selectedPart) == (0, 3)
+
+
+def test_last_card_has_no_move_right_and_middle_cards_have_both(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    to_more(window, 2)
+    key(window, Qt.Key.Key_Space)
+    assert row_ids(ctl) == ["back", "archive", "moveleft", "moveright", "delete"]
+    ctl.back()
+    to_more_last = ctl.projectCount - 1
+    ctl._select_style(to_more_last, 3)
+    key(window, Qt.Key.Key_Space)
+    assert row_ids(ctl) == ["back", "archive", "moveleft", "delete"]
+
+
+def test_archive_hides_the_project_and_stops_its_timer(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)                 # start Work
+    clock.advance(30)
+    key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)   # (stop + skip note) ...
+    key(window, Qt.Key.Key_Space)                 # ... and start it again
+    assert db.running() is not None
+    enter_style(window)
+    to_more(window)
+    key(window, Qt.Key.Key_Space)                 # menu
+    key(window, Qt.Key.Key_Space)                 # Archive (outlined first)
+    assert "Work" not in project_names(db) and ctl.projectCount == 5
+    assert db.running() is None
+    assert ctl.screen == "style" and (ctl.selectedCard, ctl.selectedPart) == (0, 0)
+    assert ctl.projects.data(ctl.projects.index(0), ctl.projects.NameRole) == "Admin"
+
+
+def test_move_right_reorders_and_the_outline_follows_the_project(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    to_more(window)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right)                 # Move right
+    key(window, Qt.Key.Key_Space)
+    assert project_names(db)[:2] == ["Admin", "Work"]
+    assert ctl.projects.data(ctl.projects.index(1), ctl.projects.NameRole) == "Work"
+    assert ctl.screen == "style" and (ctl.selectedCard, ctl.selectedPart) == (1, 3)
+    key(window, Qt.Key.Key_Space)                 # menu again, now with Move left
+    assert "moveleft" in row_ids(ctl)
+
+
+def test_delete_needs_two_presses_and_removes_the_entries(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space); clock.advance(60); key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)
+    assert len(db.entries_between(0, 2**40)) == 1
+    enter_style(window)
+    to_more(window)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)   # to Delete
+    assert ctl.listRows[ctl.listSelected]["id"] == "delete" and ctl.listRows[ctl.listSelected]["kind"] == "danger"
+    key(window, Qt.Key.Key_Space)                 # first press: arms
+    row = ctl.listRows[ctl.listSelected]
+    assert row["label"] == "Confirm delete" and row["kind"] == "armed" and ctl.screen == "projectmenu"
+    assert "Work" in project_names(db)
+    key(window, Qt.Key.Key_Space)                 # second press: deletes
+    assert "Work" not in project_names(db) and db.entries_between(0, 2**40) == []
+    assert ctl.screen == "style"
+
+
+def test_turning_away_cancels_a_pending_project_delete(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    to_more(window)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                 # armed
+    key(window, Qt.Key.Key_Left)                  # away
+    assert all(r["kind"] != "armed" for r in ctl.listRows)
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                 # back on Delete: needs two presses again
+    assert "Work" in project_names(db) and ctl.listRows[ctl.listSelected]["kind"] == "armed"
+
+
+def test_archived_list_restore_and_delete(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    key(window, Qt.Key.Key_Left)                  # Archived
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "archived" and row_ids(ctl) == ["back", "none"]
+    ctl.back()
+    assert ctl.screen == "style"
+    ctl._select_style(0, 3)
+    key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)   # menu, Archive Work
+    ctl.tap(1)                                    # Archived column item
+    assert ctl.screen == "archived" and [r["label"] for r in ctl.listRows] == ["Back", "Work"]
+    key(window, Qt.Key.Key_Space)                 # open Work
+    assert ctl.screen == "archivedmenu" and row_ids(ctl) == ["back", "restore", "delete"]
+    key(window, Qt.Key.Key_Space)                 # Restore
+    assert ctl.screen == "archived" and project_names(db)[0] == "Work"   # back at its old place
+    assert row_ids(ctl) == ["back", "none"]
+    # archive again, then delete from the archive
+    ctl.back()
+    ctl._select_style(0, 3)
+    key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)
+    ctl.tap(1)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right)                 # Delete
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "archivedmenu"           # armed
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "archived" and db.archived_projects() == [] and "Work" not in project_names(db)
+
+
+def test_plus_card_adds_a_project(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    for _ in range(ctl.projectCount * 4):
+        key(window, Qt.Key.Key_Right)             # to the "+" card
+    assert ctl.selectedCard == ctl.projectCount and ctl.selected == ctl.styleBase + 4 * ctl.projectCount
+    last_color = db.list_projects()[-1].color
+    key(window, Qt.Key.Key_Space)
+    assert ctl.notePromptOpen and ctl.noteKind == "add" and ctl.noteText == ""
+    assert ctl.noteFocus == 1                     # Cancel is outlined
+    ctl.noteType("Reading")
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                 # Save
+    assert project_names(db)[-1] == "Reading" and ctl.projectCount == 7
+    assert db.list_projects()[-1].color != last_color
+    assert (ctl.selectedCard, ctl.selectedPart) == (6, 0)
+
+
+def test_adding_can_be_cancelled_and_an_empty_name_adds_nothing(ui):
+    ctl, window, db = ui
+    count = ctl.projectCount
+    ctl.tap(1)                                    # Style
+    ctl.tap(ctl.styleBase + 4 * count)            # the "+" card
+    ctl.noteType("Nope")
+    key(window, Qt.Key.Key_Space)                 # Cancel
+    assert ctl.projectCount == count
+    ctl.tap(ctl.styleBase + 4 * count)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Space)    # Save with no name
+    assert ctl.projectCount == count and not ctl.notePromptOpen
+
+
+def test_with_every_project_archived_the_plus_card_still_works(ui):
+    ctl, window, db = ui
+    for p in db.list_projects():
+        db.archive_project(p.id)
+    ctl.reload_projects()
+    ctl.tap(1)                                    # Style
+    assert ctl.screen == "style" and ctl.projectCount == 0
+    assert ctl.selectedCard == 0 and ctl.selected == ctl.styleBase   # the "+" card is the only card
+    key(window, Qt.Key.Key_Space)
+    assert ctl.noteKind == "add"
+    ctl.noteType("First")
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Space)
+    assert project_names(db) == ["First"] and db.list_projects()[0].color
+
+
+def test_new_project_shows_up_on_the_main_screen(ui):
+    ctl, window, db = ui
+    ctl.tap(1)
+    ctl.tap(ctl.styleBase + 4 * ctl.projectCount)
+    ctl.noteType("Reading")
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Space)
+    ctl.tap(0)                                    # Back
+    assert ctl.screen == "main" and ctl.projectCount == 7
+    assert ctl.projects.data(ctl.projects.index(6), ctl.projects.NameRole) == "Reading"

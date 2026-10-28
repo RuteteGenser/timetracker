@@ -8,7 +8,7 @@ from typing import Callable
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from .clock import ACK_REF, LAST_SEEN, ClockBackend, ClockError, check_clock, clock_reference
-from .colors import next_color
+from .colors import COLOR_CYCLE, next_color
 from .db import Database, Entry
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
@@ -21,20 +21,24 @@ NOTE_SKIP = 1
 NOTE_SAVE = 2
 NOTE_MAX_LENGTH = 200
 
-# Style screen: every card has three parts, in the order the knob visits them.
-STYLE_PARTS = 3
+# Style screen: column items Back and Archived, then four parts per card in the order the knob
+# visits them, then a trailing "+" card that adds a project.
+STYLE_COLUMN = 2
+STYLE_PARTS = 4
 PART_COLOR = 0
 PART_NAME = 1
 PART_TIME = 2
+PART_MORE = 3
 
 
 # Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
 SCREEN_PARENT = {  # where Back goes
     "style": "main", "settings": "main", "reports": "main", "clockwarn": "main",
     "datetime": "settings", "status": "settings",
+    "projectmenu": "style", "archived": "style", "archivedmenu": "archived",
 }
-LIST_SCREENS = {"settings", "clockwarn"}
-LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check"}
+LIST_SCREENS = {"settings", "clockwarn", "projectmenu", "archived", "archivedmenu"}
+LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check", "archived": "Archived projects"}
 
 # Date & time screen: five fields, then Cancel and Save. The knob moves the outline over them;
 # pressing a field edits it (turn changes the value, press again to finish).
@@ -76,6 +80,9 @@ class Controller(QObject):
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
         self._rename_row = -1
+        self._adding = False  # the text prompt is naming a new project
+        self._menu_pid: int | None = None  # project the open menu (More / Archived) is about
+        self._menu_armed = False  # Delete in that menu was pressed once and waits for confirmation
         self._note_text = ""
         self._note_focus = NOTE_SKIP
         self._delete_armed = False  # Delete was pressed once and waits for confirmation
@@ -113,8 +120,20 @@ class Controller(QObject):
     def screenIsList(self):
         return self._screen in LIST_SCREENS
 
+    @Property(int, constant=True)
+    def styleBase(self):
+        """Style screen: item index of the first card's colour part (after the column items)."""
+        return STYLE_COLUMN
+
+    @Property(int, constant=True)
+    def styleParts(self):
+        return STYLE_PARTS
+
     @Property(str, notify=screenChanged)
     def listTitle(self):
+        if self._screen in ("projectmenu", "archivedmenu"):
+            project = self._db.get_project(self._menu_pid) if self._menu_pid is not None else None
+            return project.name if project else ""
         return LIST_TITLES.get(self._screen, "")
 
     @Property("QVariantList", notify=listChanged)
@@ -171,6 +190,8 @@ class Controller(QObject):
 
     @Property(str, notify=noteChanged)
     def noteKind(self):
+        if self._adding:
+            return "add"
         return "rename" if self._rename_id is not None else "note"
 
     @Property(str, notify=noteChanged)
@@ -254,8 +275,8 @@ class Controller(QObject):
         self._set_screen(screen)
 
     def _rows_for(self, screen: str) -> list[dict]:
-        def row(id_: str, label: str, value: str = "") -> dict:
-            return {"id": id_, "label": label, "value": value}
+        def row(id_: str, label: str, value: str = "", kind: str = "") -> dict:
+            return {"id": id_, "label": label, "value": value, "kind": kind}
 
         if screen == "settings":
             now = datetime.fromtimestamp(self._clock())
@@ -266,6 +287,23 @@ class Controller(QObject):
             ]
         if screen == "clockwarn":
             return [row("datetime", "Set date and time"), row("ignore", "Ignore")]
+        delete = row("delete", "Confirm delete" if self._menu_armed else "Delete", kind="armed" if self._menu_armed else "danger")
+        if screen == "projectmenu":
+            ids = [p.id for p in self._db.list_projects()]
+            card = ids.index(self._menu_pid) if self._menu_pid in ids else 0
+            rows = [row("back", "Cancel"), row("archive", "Archive")]
+            if card > 0:
+                rows.append(row("moveleft", "Move left"))
+            if card < len(ids) - 1:
+                rows.append(row("moveright", "Move right"))
+            return rows + [delete]
+        if screen == "archived":
+            archived = self._db.archived_projects()
+            if not archived:
+                return [row("back", "Back"), row("none", "No archived projects")]
+            return [row("back", "Back")] + [row(f"project:{p.id}", p.name, "Restore or delete") for p in archived]
+        if screen == "archivedmenu":
+            return [row("back", "Cancel"), row("restore", "Restore"), delete]
         return []
 
     def _activate_list(self, index: int) -> None:
@@ -278,6 +316,20 @@ class Controller(QObject):
             self._ignore_clock_problem()
         elif row_id == "datetime":
             self._open_datetime(return_to="main" if self._screen == "clockwarn" else None)
+        elif row_id == "archive":
+            self._menu_archive()
+        elif row_id in ("moveleft", "moveright"):
+            self._menu_move(-1 if row_id == "moveleft" else 1)
+        elif row_id == "delete":
+            self._menu_delete()
+        elif row_id == "restore":
+            self._menu_restore()
+        elif row_id.startswith("project:"):
+            self._menu_pid = int(row_id.split(":", 1)[1])
+            self._menu_armed = False
+            self._open_screen("archivedmenu")
+        elif row_id == "none":
+            return
         else:
             self._open_screen(row_id)
 
@@ -286,7 +338,7 @@ class Controller(QObject):
         """Knob turned: positive = clockwise = selection moves right."""
         if self._prompt_open():
             # In a text prompt the knob moves the focus between its buttons.
-            lowest = NOTE_SKIP if self._rename_id is not None else NOTE_DELETE
+            lowest = NOTE_DELETE if self._note_entry is not None else NOTE_SKIP  # only notes have Delete
             focus = max(lowest, min(NOTE_SAVE, self._note_focus + steps))
             if focus != self._note_focus:
                 self._note_focus = focus
@@ -294,7 +346,9 @@ class Controller(QObject):
                 self.noteChanged.emit()
             return
         if self._screen in LIST_SCREENS:
-            self._list.move(steps)
+            if self._list.move(steps) and self._menu_armed:
+                self._menu_armed = False  # moving away cancels a pending delete
+                self._list_rows = self._rows_for(self._screen)
             self.listChanged.emit()
             return
         if self._screen == "datetime":
@@ -360,7 +414,7 @@ class Controller(QObject):
         elif index == REPORTS:
             self._open_screen("reports")
         elif index == STYLE:
-            self._use_nav(StripNav(self._nav.project_count, column_items=1, parts=STYLE_PARTS))
+            self._use_nav(self._new_style_nav())
             self._set_screen("style")
         elif index >= FIRST_PROJECT:
             self._toggle(self.projects.project_id(index - FIRST_PROJECT))
@@ -380,17 +434,95 @@ class Controller(QObject):
 
     # -- style screen ----------------------------------------------------------------
 
+    def _new_style_nav(self) -> StripNav:
+        return StripNav(self._nav.project_count, column_items=STYLE_COLUMN, parts=STYLE_PARTS, trailing=1)
+
+    def _select_style(self, card: int, part: int) -> None:
+        before = (self._nav.selected, self._nav.offset)
+        self._nav.select(STYLE_COLUMN + card * STYLE_PARTS + part)
+        self._emit_nav_changes(before)
+
     def _activate_style(self, index: int) -> None:
-        if index == 0:  # the Back button in the column
+        if index == 0:  # Back
             self.back()
             return
-        card, part = divmod(index - 1, STYLE_PARTS)
+        if index == 1:  # Archived
+            self._open_screen("archived")
+            return
+        count = self._nav.project_count
+        if index == STYLE_COLUMN + count * STYLE_PARTS:  # the "+" card
+            self._open_add()
+            return
+        card, part = divmod(index - STYLE_COLUMN, STYLE_PARTS)
         if part == PART_COLOR:
             self._cycle_color(card)
         elif part == PART_NAME:
             self._open_rename(card)
-        else:
+        elif part == PART_TIME:
             self._reset_time(card, index)
+        else:
+            self._menu_pid = self.projects.project_id(card)
+            self._menu_armed = False
+            self._open_screen("projectmenu")
+
+    # -- project menus: More (on a card) and the Archived list ------------------------------------
+
+    def _menu_card(self) -> int:
+        ids = [p.id for p in self._db.list_projects()]
+        return ids.index(self._menu_pid) if self._menu_pid in ids else 0
+
+    def _leave_menu(self, parent: str) -> None:
+        self._menu_armed = False
+        self._open_screen(parent)
+
+    def _menu_archive(self) -> None:
+        card = self._menu_card()
+        self._db.archive_project(self._menu_pid)  # also stops its timer, if it was running
+        self.reload_projects()
+        self._leave_menu("style")
+        self._select_style(min(card, max(0, self._nav.project_count - 1)), PART_COLOR)
+
+    def _menu_move(self, direction: int) -> None:
+        card = self._menu_card()
+        if self._db.move_project(self._menu_pid, direction):
+            self.reload_projects()
+            card += direction
+        self._leave_menu("style")
+        self._select_style(card, PART_MORE)  # the outline follows the project, ready to move it again
+
+    def _menu_restore(self) -> None:
+        self._db.archive_project(self._menu_pid, False)
+        self.reload_projects()
+        self._leave_menu("archived")
+
+    def _menu_delete(self) -> None:
+        """Delete a project and all its entries. The first press only arms it, the second does it."""
+        if not self._menu_armed:
+            self._menu_armed = True
+            self._list_rows = self._rows_for(self._screen)
+            self.listChanged.emit()
+            return
+        card = self._menu_card()
+        from_archive = self._screen == "archivedmenu"
+        self._db.delete_project(self._menu_pid)
+        self.reload_projects()
+        self._leave_menu("archived" if from_archive else "style")
+        if not from_archive:
+            self._select_style(min(card, max(0, self._nav.project_count - 1)), PART_COLOR)
+
+    # -- adding a project -------------------------------------------------------------------------
+
+    def _open_add(self) -> None:
+        self._adding = True
+        self._note_text = ""
+        self._note_focus = NOTE_SKIP
+        self._delete_armed = False
+        self.noteChanged.emit()
+
+    def _new_project_color(self) -> str:
+        """The next colour in the cycle after the last project's, so neighbours differ."""
+        projects = self._db.list_projects()
+        return next_color(projects[-1].color) if projects else COLOR_CYCLE[0]
 
     def _cycle_color(self, card: int) -> None:
         project_id = self.projects.project_id(card)
@@ -418,7 +550,7 @@ class Controller(QObject):
     # -- text prompt: note after a stop, or renaming a project ------------------------------
 
     def _prompt_open(self) -> bool:
-        return self._note_entry is not None or self._rename_id is not None
+        return self._note_entry is not None or self._rename_id is not None or self._adding
 
     def _open_note(self, entry: Entry) -> None:
         self._note_entry = entry
@@ -439,6 +571,7 @@ class Controller(QObject):
     def _close_note(self) -> None:
         self._note_entry = None
         self._rename_id = None
+        self._adding = False
         self._note_text = ""
         self._note_focus = NOTE_SKIP
         self._delete_armed = False
@@ -460,7 +593,14 @@ class Controller(QObject):
 
     @Slot()
     def noteSave(self) -> None:
-        if self._rename_id is not None:
+        if self._adding:
+            name = self._note_text.strip()
+            self._close_note()
+            if name:
+                self._db.add_project(name, self._new_project_color())
+                self.reload_projects()
+                self._select_style(self._nav.project_count - 1, PART_COLOR)  # the new card
+        elif self._rename_id is not None:
             name = self._note_text.strip()
             if name:
                 self._db.rename_project(self._rename_id, name)

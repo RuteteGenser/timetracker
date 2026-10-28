@@ -5,7 +5,9 @@
 // Five slots are visible; `offset` is the first visible slot.
 //
 // The Style screen uses the same strip with other items: one column item (Back) and
-// three items per card (colour, name, time). See `new StripNav(count, 1, 3)`.
+// four items per card (colour, name, time, More) and a trailing "+" item after the last card.
+// See `new StripNav(count, 2, 4, 1)`. A trailing item takes a slot of its own; its "card" index is
+// projectCount + k, part 0.
 
 export const SETTINGS = 0;
 export const STYLE = 1;
@@ -15,10 +17,11 @@ export const VISIBLE_SLOTS = 5;
 export const SCROLL_AT = 3; // selecting the 4th visible slot starts scrolling
 
 export class StripNav {
-  constructor(projectCount = 0, columnItems = FIRST_PROJECT, parts = 1) {
+  constructor(projectCount = 0, columnItems = FIRST_PROJECT, parts = 1, trailing = 0) {
     this.projectCount = projectCount;
     this.columnItems = columnItems;
     this.parts = parts;
+    this.trailing = trailing;
     this.selected = this.#default();
     this.offset = 0; // first visible slot; 0 shows the column
   }
@@ -29,17 +32,19 @@ export class StripNav {
   }
 
   #default() {
-    return this.projectCount ? this.first : 0;
+    return this.projectCount || this.trailing ? this.first : 0;
   }
 
   get last() {
-    return this.projectCount ? this.first + this.projectCount * this.parts - 1 : this.columnItems - 1;
+    if (this.projectCount || this.trailing) return this.first + this.projectCount * this.parts + this.trailing - 1;
+    return this.columnItems - 1;
   }
 
   /** [card, part] of the selection, or [-1, -1] while a column item is selected. */
   cardAndPart() {
     if (this.selected < this.first) return [-1, -1];
     const i = this.selected - this.first;
+    if (i >= this.projectCount * this.parts) return [this.projectCount + (i - this.projectCount * this.parts), 0]; // trailing
     return [Math.floor(i / this.parts), i % this.parts];
   }
 
@@ -75,7 +80,7 @@ export class StripNav {
     let offset = this.offset;
     if (slot < offset) offset = slot;
     else if (slot - offset >= SCROLL_AT) offset = slot - SCROLL_AT + 1;
-    const lastOffset = Math.max(0, this.projectCount + 1 - VISIBLE_SLOTS);
+    const lastOffset = Math.max(0, this.projectCount + this.trailing + 1 - VISIBLE_SLOTS);
     this.offset = Math.max(0, Math.min(offset, lastOffset));
   }
 }

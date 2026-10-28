@@ -54,7 +54,8 @@ Rectangle {
                     id: body
                     anchors.fill: parent
                     radius: 20 * root.u
-                    color: modelData.id === "back" ? "#2a2f39" : "#1f232b"
+                    color: modelData.kind === "armed" ? "#8b1a1f"
+                         : (modelData.kind === "danger" ? "#d9363e" : (modelData.id === "back" ? "#2a2f39" : "#1f232b"))
                     Text {
                         anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 28 * root.u }
                         text: modelData.label

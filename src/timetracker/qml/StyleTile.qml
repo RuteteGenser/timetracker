@@ -1,14 +1,15 @@
 import QtQuick
 
-// One card on the Style screen, split into three parts the knob visits in turn:
-// colour (press: next colour), name (press: rename) and time (press twice: reset today).
+// One card on the Style screen, split into four parts the knob visits in turn:
+// colour (press: next colour), name (press: rename), time (press twice: reset today) and
+// More (press: menu with Archive, Move left / right and Delete).
 Item {
     id: root
 
     property string projectName
     property color tileColor
     property int today            // seconds worked today
-    property int selectedPart: -1 // 0 colour, 1 name, 2 time, -1 none
+    property int selectedPart: -1 // 0 colour, 1 name, 2 time, 3 more, -1 none
     property bool resetArmed      // time part waits for its confirming second press
     property real u: 1
 
@@ -16,7 +17,9 @@ Item {
 
     readonly property real gap: 16 * u
     readonly property real partWidth: width - 16 * u
-    readonly property real partHeight: (height - 16 * u - 2 * gap) / 3
+    readonly property real usable: height - 16 * u - 3 * gap
+    readonly property real partHeight: usable * 0.2933   // colour, name and time
+    readonly property real moreHeight: usable * 0.12
 
     function pad(n) { return n < 10 ? "0" + n : "" + n }
     function span(s) {
@@ -99,9 +102,26 @@ Item {
         MouseArea { anchors.fill: parent; onClicked: root.partTapped(2) }
     }
 
+    Rectangle {   // part 3: the menu
+        id: morePart
+        x: 8 * root.u; y: timePart.y + root.partHeight + root.gap
+        width: root.partWidth; height: root.moreHeight
+        radius: 20 * root.u
+        color: "#2a2f39"
+        Text {
+            anchors.centerIn: parent
+            text: "More\u2026"
+            color: "#ffffff"
+            font.pixelSize: 28 * root.u
+            font.bold: true
+        }
+        MouseArea { anchors.fill: parent; onClicked: root.partTapped(3) }
+    }
+
     Rectangle {   // the same outline as everywhere else, around the selected part
         visible: root.selectedPart >= 0
-        property Item target: root.selectedPart === 0 ? colorPart : (root.selectedPart === 1 ? namePart : timePart)
+        property Item target: root.selectedPart === 0 ? colorPart
+                            : (root.selectedPart === 1 ? namePart : (root.selectedPart === 2 ? timePart : morePart))
         x: target.x - 7 * root.u; y: target.y - 7 * root.u
         width: target.width + 14 * root.u; height: target.height + 14 * root.u
         radius: 27 * root.u

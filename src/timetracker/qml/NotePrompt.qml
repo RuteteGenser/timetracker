@@ -33,12 +33,13 @@ Rectangle {
         Row {
             spacing: 16 * root.u
             Text {
-                text: ctl.noteKind === "rename" ? "Rename" : "What did you do?"
+                text: ctl.noteKind === "rename" ? "Rename" : (ctl.noteKind === "add" ? "New project" : "What did you do?")
                 color: "#ffffff"; font.pixelSize: 38 * root.u; font.bold: true
             }
             Text {
                 anchors.baseline: parent.children[0].baseline
-                text: ctl.noteProject + "  ·  " + root.span(ctl.noteSeconds)
+                text: ctl.noteKind !== "note" ? (ctl.noteKind === "rename" ? ctl.noteProject : "")
+                                             : ctl.noteProject + "  ·  " + root.span(ctl.noteSeconds)
                 color: "#aab2bf"; font.pixelSize: 28 * root.u
             }
         }
@@ -49,7 +50,7 @@ Rectangle {
             Text {
                 anchors { fill: parent; margins: 18 * root.u }
                 verticalAlignment: Text.AlignVCenter
-                text: ctl.noteText.length ? ctl.noteText + "▏" : "Optional note…"
+                text: ctl.noteText.length ? ctl.noteText + "▏" : (ctl.noteKind !== "note" ? "Name…" : "Optional note…")
                 color: ctl.noteText.length ? "#ffffff" : "#6b7380"
                 font.pixelSize: 34 * root.u
                 elide: Text.ElideLeft
@@ -94,7 +95,7 @@ Rectangle {
                 onClicked: root.shift = !root.shift
             }
             KeyButton {
-                property int buttons: ctl.noteKind === "rename" ? 2 : 3   // Delete only exists for notes
+                property int buttons: ctl.noteKind === "note" ? 3 : 2   // Delete only exists for notes
                 u: root.u; width: root.width - 40 * root.u - (buttons + 1) * root.gap - 130 * root.u - buttons * 170 * root.u
                 height: 76 * root.u; label: "space"
                 onClicked: ctl.noteType(" ")
@@ -108,7 +109,7 @@ Rectangle {
             }
             KeyButton {
                 u: root.u; width: 170 * root.u; height: 76 * root.u
-                label: ctl.noteKind === "rename" ? "Cancel" : "Skip"; focused: ctl.noteFocus === 1
+                label: ctl.noteKind !== "note" ? "Cancel" : "Skip"; focused: ctl.noteFocus === 1
                 onClicked: ctl.noteSkip()
             }
             KeyButton {

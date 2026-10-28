@@ -215,3 +215,68 @@ def test_list_set_count_clamps():
         n.move(1)
     n.set_count(3)
     assert n.selected == 2 and n.offset == 0
+
+
+# -- Style screen with a trailing "+" item ---------------------------------------------------
+
+def style4(n=5):
+    return StripNav(n, column_items=2, parts=4, trailing=1)
+
+
+def test_style4_default_is_the_first_cards_colour():
+    n = style4()
+    assert n.selected == 2 and n.card_and_part() == (0, 0)
+
+
+def test_style4_knob_visits_four_parts_then_the_plus_card():
+    n = style4(2)
+    seen = []
+    for _ in range(10):
+        seen.append(n.card_and_part())
+        n.move(1)
+    assert seen[:8] == [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 1), (1, 2), (1, 3)]
+    assert seen[8] == (2, 0)                  # the "+" card: card index == project_count
+    assert seen[9] == (2, 0)                  # and the end: no wrap
+    assert n.selected == n.last
+
+
+def test_style4_left_from_the_first_part_reaches_archived_then_back():
+    n = style4()
+    n.move(-1)
+    assert n.selected == 1 and n.card_and_part() == (-1, -1)
+    n.move(-1)
+    assert n.selected == 0
+    n.move(-1)
+    assert n.selected == 0
+
+
+def test_style4_with_no_projects_only_the_plus_card_remains():
+    n = style4(0)
+    assert n.selected == 2 and n.card_and_part() == (0, 0)
+    n.move(5)
+    assert n.selected == 2
+    n.move(-1)
+    assert n.selected == 1
+
+
+def test_style4_every_item_is_visible_and_the_plus_card_is_reachable():
+    for count in range(0, 10):
+        n = style4(count)
+        for step in [1] * (4 * count + 4) + [-1] * (4 * count + 5):
+            n.move(step)
+            card, _ = n.card_and_part()
+            assert n.offset <= card + 1 < n.offset + 5
+        for _ in range(4 * count + 4):
+            n.move(1)
+        assert n.card_and_part() == (count, 0)
+
+
+def test_style4_scrolling_counts_the_plus_card_as_a_slot():
+    n = style4(3)                              # slots: col, 3 cards, "+"
+    for _ in range(4 * 3):
+        n.move(1)                              # now on the "+" card, slot 4
+    assert n.card_and_part() == (3, 0) and n.offset == 0   # five slots fit exactly
+    n = style4(4)
+    for _ in range(4 * 4):
+        n.move(1)
+    assert n.card_and_part() == (4, 0) and n.offset == 1

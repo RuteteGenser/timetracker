@@ -80,6 +80,40 @@ export class Store {
     return this.data.projects.filter((p) => !p.archived);
   }
 
+  archivedProjects() {
+    return this.data.projects.filter((p) => p.archived);
+  }
+
+  /** Hide a project from the main screen (or bring it back). A running timer on it is stopped. */
+  archiveProject(projectId, archived = true) {
+    const p = this.data.projects.find((x) => x.id === projectId);
+    if (!p) return;
+    if (archived && this.running()?.projectId === projectId) this.#stopRunning(this.now());
+    p.archived = archived;
+    this.#save();
+  }
+
+  /** Delete a project together with all its entries. */
+  deleteProject(projectId) {
+    this.data.projects = this.data.projects.filter((p) => p.id !== projectId);
+    this.data.entries = this.data.entries.filter((e) => e.projectId !== projectId);
+    this.#save();
+  }
+
+  /** Swap a project's place with its visible neighbour (-1 left, +1 right). False at the ends. */
+  moveProject(projectId, direction) {
+    const visible = this.projects();
+    const i = visible.findIndex((p) => p.id === projectId);
+    const j = i + (direction > 0 ? 1 : -1);
+    if (i < 0 || j < 0 || j >= visible.length) return false;
+    const all = this.data.projects;
+    const a = all.indexOf(visible[i]);
+    const b = all.indexOf(visible[j]);
+    [all[a], all[b]] = [all[b], all[a]];
+    this.#save();
+    return true;
+  }
+
   running() {
     return this.data.entries.find((e) => e.end === null) ?? null;
   }
