@@ -5,7 +5,7 @@
 import { StripNav, SETTINGS, STYLE, FIRST_PROJECT } from "./nav.js";
 import { Store, dayBounds } from "./store.js";
 
-const SLOT_W = 256; // five equal slots across the 1280 px screen
+const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
 
 const store = new Store();
 const nav = new StripNav(store.projects().length);
@@ -68,8 +68,8 @@ function renderNav() {
 // -- actions (same rules as src/timetracker/controller.py) ----------------------
 
 function turn(steps) {
-  if (note) {                       // in the note prompt the knob moves between Skip and Save
-    note.focus = steps > 0 ? 1 : 0;
+  if (note) {                       // in the note prompt the knob moves between Delete, Skip and Save
+    note.focus = Math.max(NOTE_DELETE, Math.min(NOTE_SAVE, note.focus + steps));
     renderNote();
     return;
   }
@@ -106,7 +106,7 @@ function back() {
 }
 
 function press() {
-  if (note) note.focus === 1 ? noteSave() : noteSkip();
+  if (note) [noteDelete, noteSkip, noteSave][note.focus]();
   else if (screen !== "main") back();
   else activate(nav.selected);
 }
@@ -119,13 +119,16 @@ function tap(index) {
 
 // -- note prompt ----------------------------------------------------------------
 
-let note = null; // { entryId, name, seconds, text, focus: 0 = Skip, 1 = Save, shift }
+const NOTE_DELETE = 0; // note prompt buttons, left to right
+const NOTE_SKIP = 1;
+const NOTE_SAVE = 2;
+let note = null; // { entryId, name, seconds, text, focus (a NOTE_ constant), shift }
 const noteEl = document.getElementById("note");
 const noteText = document.getElementById("note-text");
 const KEY_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"];
 
 function openNote(entry, project) {
-  note = { entryId: entry.id, name: project.name, seconds: entry.end - entry.start, text: "", focus: 0, shift: true };
+  note = { entryId: entry.id, name: project.name, seconds: entry.end - entry.start, text: "", focus: NOTE_SKIP, shift: true };
   document.getElementById("note-sub").textContent = `${project.name}  \u00b7  ${spanShort(note.seconds)}`;
   renderNote();
 }
@@ -142,6 +145,13 @@ function noteSave() {
 
 function noteSkip() {
   noteClose();
+}
+
+// Throw away the timer that was just stopped: its time no longer counts.
+function noteDelete() {
+  store.deleteEntry(note.entryId);
+  noteClose();
+  renderTimes();
 }
 
 function noteType(ch) {
@@ -184,8 +194,9 @@ function renderNote() {
   last.className = "krow";
   last.appendChild(key("Shift", `wide-s ${note.shift ? "shift-on" : ""}`, () => { note.shift = !note.shift; renderNote(); }));
   last.appendChild(key("space", "grow", () => noteType(" ")));
-  last.appendChild(key("Skip", `wide-b ${note.focus === 0 ? "focus" : ""}`, noteSkip));
-  last.appendChild(key("Save", `wide-b accent ${note.focus === 1 ? "focus" : ""}`, noteSave));
+  last.appendChild(key("Delete", `wide-b danger ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
+  last.appendChild(key("Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
+  last.appendChild(key("Save", `wide-b accent ${note.focus === NOTE_SAVE ? "focus" : ""}`, noteSave));
   keys.appendChild(last);
 }
 

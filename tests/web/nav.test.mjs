@@ -120,3 +120,17 @@ test("store: stop returns the finished entry and notes can be saved", () => {
   s.setNote(done.id, "  wrote tests  ");
   assert.equal(s.data.entries[0].note, "wrote tests");
 });
+
+test("store: deleting an entry removes its time", () => {
+  let t = 1_700_000_000;
+  const s = new Store(memory(), () => t);
+  const [a] = s.projects();
+  const t0 = t;
+  s.start(a.id);
+  t += 60;
+  const done = s.stop();
+  assert.deepEqual(s.totals(t0 - 1, t0 + 1000), { [a.id]: 60 });
+  s.deleteEntry(done.id);
+  assert.deepEqual(s.totals(t0 - 1, t0 + 1000), {});
+  assert.equal(s.data.entries.length, 0);
+});

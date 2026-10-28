@@ -1,8 +1,9 @@
 import QtQuick
 
 // Shown after a timer stops: an optional note with an on-screen keyboard.
-// Knob: turn switches between Skip and Save, press activates the outlined one.
+// Knob: turn moves the outline between Delete, Skip and Save; press activates it.
 // Skip starts outlined, so a single press of the button dismisses the prompt.
+// Delete throws the timer that was just stopped away (its time no longer counts).
 Rectangle {
     id: root
     color: "#101216"
@@ -88,18 +89,23 @@ Rectangle {
                 onClicked: root.shift = !root.shift
             }
             KeyButton {
-                u: root.u; width: root.width - 40 * root.u - 3 * 8 * root.u - 130 * root.u - 2 * 190 * root.u
+                u: root.u; width: root.width - 40 * root.u - 4 * 8 * root.u - 130 * root.u - 3 * 170 * root.u
                 height: 76 * root.u; label: "space"
                 onClicked: ctl.noteType(" ")
             }
             KeyButton {
-                u: root.u; width: 190 * root.u; height: 76 * root.u
-                label: "Skip"; focused: ctl.noteFocus === 0
+                u: root.u; width: 170 * root.u; height: 76 * root.u
+                label: "Delete"; danger: true; focused: ctl.noteFocus === 0
+                onClicked: ctl.noteDelete()
+            }
+            KeyButton {
+                u: root.u; width: 170 * root.u; height: 76 * root.u
+                label: "Skip"; focused: ctl.noteFocus === 1
                 onClicked: ctl.noteSkip()
             }
             KeyButton {
-                u: root.u; width: 190 * root.u; height: 76 * root.u
-                label: "Save"; accent: true; focused: ctl.noteFocus === 1
+                u: root.u; width: 170 * root.u; height: 76 * root.u
+                label: "Save"; accent: true; focused: ctl.noteFocus === 2
                 onClicked: ctl.noteSave()
             }
         }

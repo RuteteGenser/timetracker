@@ -95,8 +95,8 @@ Item {
     Rectangle {   // selection outline
         visible: root.selected
         anchors.fill: body
-        anchors.margins: -8 * root.u
-        radius: body.radius + 8 * root.u
+        anchors.margins: -7 * root.u
+        radius: body.radius + 7 * root.u
         color: "transparent"
         border.color: "#ffffff"
         border.width: 6 * root.u

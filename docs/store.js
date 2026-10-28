@@ -87,6 +87,12 @@ export class Store {
     return run;
   }
 
+  /** Remove one entry; its time no longer counts anywhere. */
+  deleteEntry(entryId) {
+    this.data.entries = this.data.entries.filter((e) => e.id !== entryId);
+    this.#save();
+  }
+
   setNote(entryId, note) {
     const e = this.data.entries.find((x) => x.id === entryId);
     if (e) {

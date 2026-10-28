@@ -11,8 +11,9 @@ from .nav import FIRST_PROJECT, SETTINGS, STYLE, StripNav
 from .timeutil import day_bounds
 
 
-NOTE_SKIP = 0  # which button the knob button would press in the note prompt
-NOTE_SAVE = 1
+NOTE_DELETE = 0  # note prompt buttons, left to right; the knob button presses the focused one
+NOTE_SKIP = 1
+NOTE_SAVE = 2
 NOTE_MAX_LENGTH = 200
 
 
@@ -120,8 +121,8 @@ class Controller(QObject):
     def turn(self, steps: int) -> None:
         """Knob turned: positive = clockwise = selection moves right."""
         if self._note_entry is not None:
-            # In the note prompt the knob moves between Skip and Save.
-            self._note_focus = NOTE_SAVE if steps > 0 else NOTE_SKIP
+            # In the note prompt the knob moves the focus between Delete, Skip and Save.
+            self._note_focus = max(NOTE_DELETE, min(NOTE_SAVE, self._note_focus + steps))
             self.noteChanged.emit()
             return
         if self._screen != "main":
@@ -134,7 +135,7 @@ class Controller(QObject):
     def press(self) -> None:
         """Knob button pressed."""
         if self._note_entry is not None:
-            self.noteSave() if self._note_focus == NOTE_SAVE else self.noteSkip()
+            {NOTE_DELETE: self.noteDelete, NOTE_SKIP: self.noteSkip, NOTE_SAVE: self.noteSave}[self._note_focus]()
         elif self._screen != "main":
             self.back()
         else:
@@ -220,3 +221,11 @@ class Controller(QObject):
     def noteSkip(self) -> None:
         if self._note_entry is not None:
             self._close_note()
+
+    @Slot()
+    def noteDelete(self) -> None:
+        """Discard the entry that was just stopped: its time does not count."""
+        if self._note_entry is not None:
+            self._db.delete_entry(self._note_entry.id)
+            self._close_note()
+            self._refresh_times()

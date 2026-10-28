@@ -186,6 +186,11 @@ class Database:
         row = self._conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
         return self._entry(row) if row else None
 
+    def delete_entry(self, entry_id: int) -> None:
+        """Remove one entry; its time no longer counts anywhere."""
+        with self._tx():
+            self._conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+
     def set_note(self, entry_id: int, note: str) -> None:
         with self._tx():
             self._conn.execute("UPDATE entries SET note = ? WHERE id = ?", (note.strip(), entry_id))

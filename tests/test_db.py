@@ -161,3 +161,15 @@ def test_meta(db):
 def test_durability_pragmas(db):
     assert db._conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert db._conn.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+
+
+def test_delete_entry_removes_its_time(db, clock):
+    p = db.add_project("A", "#1")
+    t0 = clock()
+    e = db.start(p)
+    clock.advance(60)
+    db.stop()
+    assert db.totals(t0 - 1, t0 + 1000) == {p: 60}
+    db.delete_entry(e.id)
+    assert db.get_entry(e.id) is None
+    assert db.totals(t0 - 1, t0 + 1000) == {}

@@ -7,14 +7,17 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 #stage { position: absolute; left: 50%; top: 50%; width: 1280px; height: 720px;
   transform-origin: 0 0; background: #101216; overflow: hidden; touch-action: manipulation; }
 
-#strip { position: absolute; left: 0; top: 0; height: 720px; display: flex;
+/* 15 px margin all round: the selection outline never touches the screen edge, and cards
+   scrolled out of view are cut off at the margin instead of being drawn into it. */
+#viewport { position: absolute; left: 15px; top: 15px; width: 1250px; height: 690px; overflow: hidden; }
+#strip { position: absolute; left: 0; top: 0; height: 690px; display: flex;
   transition: transform 240ms cubic-bezier(.215,.61,.355,1); will-change: transform; }
 
-#column { width: 256px; height: 720px; flex: none; display: flex; flex-direction: column; }
+#column { width: 250px; height: 690px; flex: none; display: flex; flex-direction: column; }
 .colbtn, .tile { position: relative; margin: 8px; border-radius: 20px; cursor: pointer; }
 .colbtn { flex: 1; background: #2a2f39; display: flex; align-items: center; justify-content: center;
   font-size: 30px; font-weight: 700; }
-.tile { flex: none; width: 240px; height: 704px; background: #1f232b; }  /* no overflow:hidden, it would clip the selection outline */
+.tile { flex: none; width: 234px; height: 674px; background: #1f232b; }  /* no overflow:hidden, it would clip the selection outline */
 .tile .band { position: absolute; left: 0; right: 0; top: 0; height: 26px; background: var(--c); border-radius: 20px 20px 0 0; }
 .tile .name { position: absolute; left: 24px; right: 24px; top: 64px; font-size: 36px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -27,7 +30,7 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .tile.running .badge { display: block; }
 .tile.running .timer { display: block; }
 .tile.running .today { color: #fff; }
-.selected::before { content: ""; position: absolute; inset: -8px; border: 6px solid #fff; border-radius: 28px;
+.selected::before { content: ""; position: absolute; inset: -7px; border: 6px solid #fff; border-radius: 27px;
   z-index: 2; pointer-events: none; }
 
 #overlay { position: absolute; inset: 0; background: #101216; display: none; flex-direction: column;
@@ -57,6 +60,7 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .key.shift-on { background: #4a5160; }
 .key.accent { background: #2f9a58; }
 .key.wide-s { flex: 0 0 130px; }
-.key.wide-b { flex: 0 0 190px; }
+.key.wide-b { flex: 0 0 170px; }
+.key.danger { background: #b8434d; }
 .key.grow { flex: 1 1 auto; }
 .key.focus::before { content: ""; position: absolute; inset: -4px; border: 4px solid #fff; border-radius: 16px; pointer-events: none; }

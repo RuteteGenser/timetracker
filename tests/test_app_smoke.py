@@ -81,11 +81,11 @@ def test_stopping_asks_for_a_note_and_saves_it(ui):
     key(window, Qt.Key.Key_Space)          # start project 1
     key(window, Qt.Key.Key_Space)          # stop it
     entry = db.entries_between(0, 2**40)[0]
-    assert ctl.notePromptOpen and ctl.noteFocus == 0 and ctl.noteProject == "Work"
+    assert ctl.notePromptOpen and ctl.noteFocus == 1 and ctl.noteProject == "Work"  # 1 = Skip
     ctl.noteType("Fixed ")
     ctl.noteType("bug")
     key(window, Qt.Key.Key_Right)          # knob: move to Save
-    assert ctl.noteFocus == 1
+    assert ctl.noteFocus == 2
     key(window, Qt.Key.Key_Space)
     assert not ctl.notePromptOpen
     assert db.get_entry(entry.id).note == "Fixed bug"
@@ -137,3 +137,31 @@ def test_tap_starts_project(ui):
     ctl.tap(4)
     assert db.running().project_id == ctl.projects.project_id(2)
     assert ctl.selected == 4
+
+
+def test_delete_button_discards_the_timer(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)          # start
+    clock.advance(300)
+    key(window, Qt.Key.Key_Space)          # stop -> prompt
+    key(window, Qt.Key.Key_Left)           # knob: move to Delete
+    assert ctl.noteFocus == 0
+    key(window, Qt.Key.Key_Left)           # clamps at Delete
+    assert ctl.noteFocus == 0
+    key(window, Qt.Key.Key_Space)
+    assert not ctl.notePromptOpen
+    assert db.entries_between(0, 2**40) == []
+    assert ctl.projects.data(ctl.projects.index(0), ctl.projects.TodayRole) == 0
+
+
+def test_delete_from_switch_prompt_keeps_the_new_timer(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)          # start Work
+    clock.advance(10)
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)          # start Admin; prompt is for Work
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)          # Delete Work's entry
+    running = db.running()
+    assert running is not None and running.project_id == ctl.projects.project_id(1)
+    assert len(db.entries_between(0, 2**40)) == 1

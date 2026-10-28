@@ -10,15 +10,25 @@ Window {
     title: "Time Tracker"
     visibility: cfgFullscreen ? Window.FullScreen : Window.Windowed
 
-    // Layout: five equal slots fill the width: the Settings/Style column and four project cards.
+    // Layout: a margin all round, so nothing (the selection outline included) touches the
+    // screen edge; inside it five equal slots: the Settings/Style column and four project cards.
     readonly property real u: height / 720
-    readonly property real tileW: width / 5
+    readonly property real pad: 15 * width / 1280
+    readonly property real tileW: (width - 2 * pad) / 5
     readonly property real colW: tileW
 
     Item {
         id: mainScreen
         anchors.fill: parent
         visible: ctl.screen === "main"
+
+        // Cards scrolled out of view are cut off at the margin, not drawn into it.
+        Item {
+            id: viewport
+            x: win.pad; y: win.pad
+            width: win.width - 2 * win.pad
+            height: win.height - 2 * win.pad
+            clip: true
 
         // The strip: [Settings/Style column][card][card]... slides left as a whole.
         // View offset n = number of slots scrolled off to the left.
@@ -50,6 +60,7 @@ Window {
                     x: (index + 1) * win.tileW
                     width: win.tileW
                     height: strip.height
+                    u: win.u
                     projectName: model.projectName
                     tileColor: model.tileColor
                     today: model.today
@@ -59,6 +70,7 @@ Window {
                     onTapped: ctl.tap(index + 2)
                 }
             }
+        }
         }
     }
 

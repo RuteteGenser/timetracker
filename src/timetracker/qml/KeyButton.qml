@@ -6,13 +6,14 @@ Rectangle {
 
     property string label
     property bool focused          // outlined: the knob button would press this
-    property bool accent           // coloured (Save)
+    property bool accent           // green (Save)
+    property bool danger           // red (Delete)
     property real u: 1
 
     signal clicked()
 
     radius: 12 * u
-    color: accent ? "#2f9a58" : (mouse.pressed ? "#4a5160" : "#2a2f39")
+    color: accent ? "#2f9a58" : (danger ? "#b8434d" : (mouse.pressed ? "#4a5160" : "#2a2f39"))
 
     Text {
         anchors.centerIn: parent
