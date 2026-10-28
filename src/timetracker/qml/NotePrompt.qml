@@ -3,13 +3,15 @@ import QtQuick
 // Shown after a timer stops: an optional note with an on-screen keyboard.
 // Knob: turn moves the outline between Delete, Skip and Save; press activates it.
 // Skip starts outlined, so a single press of the button dismisses the prompt.
-// Delete throws the timer that was just stopped away (its time no longer counts).
+// Delete throws the timer that was just stopped away (its time no longer counts); it needs
+// two presses: the first turns it orange and says Confirm.
 Rectangle {
     id: root
     color: "#101216"
 
     property real u: height / 720
     property bool shift: true
+    readonly property real gap: 12 * u   // space between keys, both ways
     readonly property var rows: ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"]
 
     function span(s) {
@@ -26,7 +28,7 @@ Rectangle {
 
     Column {
         anchors { fill: parent; margins: 20 * root.u }
-        spacing: 10 * root.u
+        spacing: root.gap
 
         Row {
             spacing: 16 * root.u
@@ -56,12 +58,12 @@ Rectangle {
             Row {
                 id: keyRow
                 property string chars: modelData
-                spacing: 8 * root.u
+                spacing: root.gap
                 Repeater {
                     model: keyRow.chars.length
                     KeyButton {
                         u: root.u
-                        width: (root.width - 40 * root.u - 10 * 8 * root.u) / 11
+                        width: (root.width - 40 * root.u - 10 * root.gap) / 11
                         height: 76 * root.u
                         label: root.shift ? keyRow.chars[index].toUpperCase() : keyRow.chars[index]
                         onClicked: {
@@ -73,7 +75,7 @@ Rectangle {
                 KeyButton {   // backspace ends the first row
                     visible: keyRow.chars === root.rows[0]
                     u: root.u
-                    width: (root.width - 40 * root.u - 10 * 8 * root.u) / 11
+                    width: (root.width - 40 * root.u - 10 * root.gap) / 11
                     height: 76 * root.u
                     label: "⌫"
                     onClicked: ctl.noteBackspace()
@@ -82,20 +84,21 @@ Rectangle {
         }
 
         Row {
-            spacing: 8 * root.u
+            spacing: root.gap
             KeyButton {
                 u: root.u; width: 130 * root.u; height: 76 * root.u
                 label: "Shift"; color: root.shift ? "#4a5160" : "#2a2f39"
                 onClicked: root.shift = !root.shift
             }
             KeyButton {
-                u: root.u; width: root.width - 40 * root.u - 4 * 8 * root.u - 130 * root.u - 3 * 170 * root.u
+                u: root.u; width: root.width - 40 * root.u - 4 * root.gap - 130 * root.u - 3 * 170 * root.u
                 height: 76 * root.u; label: "space"
                 onClicked: ctl.noteType(" ")
             }
             KeyButton {
                 u: root.u; width: 170 * root.u; height: 76 * root.u
-                label: "Delete"; danger: true; focused: ctl.noteFocus === 0
+                label: ctl.noteDeleteArmed ? "Confirm" : "Delete"; danger: true
+                armed: ctl.noteDeleteArmed; focused: ctl.noteFocus === 0
                 onClicked: ctl.noteDelete()
             }
             KeyButton {

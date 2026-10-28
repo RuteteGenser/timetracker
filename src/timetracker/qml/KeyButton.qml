@@ -8,12 +8,13 @@ Rectangle {
     property bool focused          // outlined: the knob button would press this
     property bool accent           // green (Save)
     property bool danger           // red (Delete)
+    property bool armed            // Delete after its first press: orange, needs a second press
     property real u: 1
 
     signal clicked()
 
     radius: 4 * u
-    color: accent ? "#2f9a58" : (danger ? "#b8434d" : (mouse.pressed ? "#4a5160" : "#2a2f39"))
+    color: accent ? "#2f9a58" : (armed ? "#e0701a" : (danger ? "#b8434d" : (mouse.pressed ? "#4a5160" : "#2a2f39")))
 
     Text {
         anchors.centerIn: parent
@@ -26,8 +27,7 @@ Rectangle {
     Rectangle {
         visible: root.focused
         anchors.fill: parent
-        anchors.margins: -4 * root.u
-        radius: root.radius + 4 * root.u
+        radius: root.radius
         color: "transparent"
         border.color: "#ffffff"
         border.width: 4 * root.u

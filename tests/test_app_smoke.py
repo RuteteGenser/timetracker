@@ -139,19 +139,47 @@ def test_tap_starts_project(ui):
     assert ctl.selected == 4
 
 
-def test_delete_button_discards_the_timer(ui, clock):
+def test_delete_needs_two_presses(ui, clock):
     ctl, window, db = ui
     key(window, Qt.Key.Key_Space)          # start
     clock.advance(300)
     key(window, Qt.Key.Key_Space)          # stop -> prompt
     key(window, Qt.Key.Key_Left)           # knob: move to Delete
+    assert ctl.noteFocus == 0 and not ctl.noteDeleteArmed
+    key(window, Qt.Key.Key_Left)           # clamps at Delete, nothing else changes
     assert ctl.noteFocus == 0
-    key(window, Qt.Key.Key_Left)           # clamps at Delete
-    assert ctl.noteFocus == 0
-    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)          # first press: only arms it
+    assert ctl.notePromptOpen and ctl.noteDeleteArmed
+    assert len(db.entries_between(0, 2**40)) == 1
+    key(window, Qt.Key.Key_Space)          # second press: deletes
     assert not ctl.notePromptOpen
     assert db.entries_between(0, 2**40) == []
     assert ctl.projects.data(ctl.projects.index(0), ctl.projects.TodayRole) == 0
+
+
+def test_turning_away_cancels_a_pending_delete(ui):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)          # armed
+    assert ctl.noteDeleteArmed
+    key(window, Qt.Key.Key_Right)          # to Skip
+    assert not ctl.noteDeleteArmed
+    key(window, Qt.Key.Key_Left)           # back to Delete: needs two presses again
+    key(window, Qt.Key.Key_Space)
+    assert ctl.notePromptOpen and len(db.entries_between(0, 2**40)) == 1
+
+
+def test_typing_cancels_a_pending_delete(ui):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)
+    assert ctl.noteDeleteArmed
+    ctl.noteType("x")
+    assert not ctl.noteDeleteArmed
 
 
 def test_delete_from_switch_prompt_keeps_the_new_timer(ui, clock):
@@ -161,7 +189,8 @@ def test_delete_from_switch_prompt_keeps_the_new_timer(ui, clock):
     key(window, Qt.Key.Key_Right)
     key(window, Qt.Key.Key_Space)          # start Admin; prompt is for Work
     key(window, Qt.Key.Key_Left)
-    key(window, Qt.Key.Key_Space)          # Delete Work's entry
+    key(window, Qt.Key.Key_Space)          # arm
+    key(window, Qt.Key.Key_Space)          # delete Work's entry
     running = db.running()
     assert running is not None and running.project_id == ctl.projects.project_id(1)
     assert len(db.entries_between(0, 2**40)) == 1

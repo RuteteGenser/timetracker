@@ -34,6 +34,7 @@ class Controller(QObject):
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._note_text = ""
         self._note_focus = NOTE_SKIP
+        self._delete_armed = False  # Delete was pressed once and waits for confirmation
         self.projects = ProjectModel(self)
         self.reload_projects()
 
@@ -71,6 +72,10 @@ class Controller(QObject):
     @Property(int, notify=noteChanged)
     def noteFocus(self):
         return self._note_focus
+
+    @Property(bool, notify=noteChanged)
+    def noteDeleteArmed(self):
+        return self._delete_armed
 
     @Property(str, notify=noteChanged)
     def noteProject(self):
@@ -122,8 +127,11 @@ class Controller(QObject):
         """Knob turned: positive = clockwise = selection moves right."""
         if self._note_entry is not None:
             # In the note prompt the knob moves the focus between Delete, Skip and Save.
-            self._note_focus = max(NOTE_DELETE, min(NOTE_SAVE, self._note_focus + steps))
-            self.noteChanged.emit()
+            focus = max(NOTE_DELETE, min(NOTE_SAVE, self._note_focus + steps))
+            if focus != self._note_focus:
+                self._note_focus = focus
+                self._delete_armed = False  # moving away cancels a pending delete
+                self.noteChanged.emit()
             return
         if self._screen != "main":
             return
@@ -190,24 +198,28 @@ class Controller(QObject):
         self._note_entry = entry
         self._note_text = ""
         self._note_focus = NOTE_SKIP  # one button press skips
+        self._delete_armed = False
         self.noteChanged.emit()
 
     def _close_note(self) -> None:
         self._note_entry = None
         self._note_text = ""
         self._note_focus = NOTE_SKIP
+        self._delete_armed = False
         self.noteChanged.emit()
 
     @Slot(str)
     def noteType(self, text: str) -> None:
         if self._note_entry is not None:
             self._note_text = (self._note_text + text)[:NOTE_MAX_LENGTH]
+            self._delete_armed = False
             self.noteChanged.emit()
 
     @Slot()
     def noteBackspace(self) -> None:
         if self._note_entry is not None and self._note_text:
             self._note_text = self._note_text[:-1]
+            self._delete_armed = False
             self.noteChanged.emit()
 
     @Slot()
@@ -224,8 +236,16 @@ class Controller(QObject):
 
     @Slot()
     def noteDelete(self) -> None:
-        """Discard the entry that was just stopped: its time does not count."""
-        if self._note_entry is not None:
-            self._db.delete_entry(self._note_entry.id)
-            self._close_note()
-            self._refresh_times()
+        """Discard the entry that was just stopped (its time does not count).
+
+        The first call only arms the button; the second one deletes.
+        """
+        if self._note_entry is None:
+            return
+        if not self._delete_armed:
+            self._delete_armed = True
+            self.noteChanged.emit()
+            return
+        self._db.delete_entry(self._note_entry.id)
+        self._close_note()
+        self._refresh_times()

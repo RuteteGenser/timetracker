@@ -69,7 +69,9 @@ function renderNav() {
 
 function turn(steps) {
   if (note) {                       // in the note prompt the knob moves between Delete, Skip and Save
-    note.focus = Math.max(NOTE_DELETE, Math.min(NOTE_SAVE, note.focus + steps));
+    const focus = Math.max(NOTE_DELETE, Math.min(NOTE_SAVE, note.focus + steps));
+    if (focus !== note.focus) note.armed = false; // moving away cancels a pending delete
+    note.focus = focus;
     renderNote();
     return;
   }
@@ -122,13 +124,13 @@ function tap(index) {
 const NOTE_DELETE = 0; // note prompt buttons, left to right
 const NOTE_SKIP = 1;
 const NOTE_SAVE = 2;
-let note = null; // { entryId, name, seconds, text, focus (a NOTE_ constant), shift }
+let note = null; // { entryId, name, seconds, text, focus (a NOTE_ constant), shift, armed }
 const noteEl = document.getElementById("note");
 const noteText = document.getElementById("note-text");
 const KEY_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"];
 
 function openNote(entry, project) {
-  note = { entryId: entry.id, name: project.name, seconds: entry.end - entry.start, text: "", focus: NOTE_SKIP, shift: true };
+  note = { entryId: entry.id, name: project.name, seconds: entry.end - entry.start, text: "", focus: NOTE_SKIP, shift: true, armed: false };
   document.getElementById("note-sub").textContent = `${project.name}  \u00b7  ${spanShort(note.seconds)}`;
   renderNote();
 }
@@ -147,8 +149,14 @@ function noteSkip() {
   noteClose();
 }
 
-// Throw away the timer that was just stopped: its time no longer counts.
+// Throw away the timer that was just stopped (its time no longer counts).
+// The first press only arms the button (orange, "Confirm"); the second deletes.
 function noteDelete() {
+  if (!note.armed) {
+    note.armed = true;
+    renderNote();
+    return;
+  }
   store.deleteEntry(note.entryId);
   noteClose();
   renderTimes();
@@ -157,11 +165,13 @@ function noteDelete() {
 function noteType(ch) {
   if (note.text.length < 200) note.text += ch;
   note.shift = false;
+  note.armed = false;
   renderNote();
 }
 
 function noteBackspace() {
   note.text = note.text.slice(0, -1);
+  note.armed = false;
   renderNote();
 }
 
@@ -194,7 +204,7 @@ function renderNote() {
   last.className = "krow";
   last.appendChild(key("Shift", `wide-s ${note.shift ? "shift-on" : ""}`, () => { note.shift = !note.shift; renderNote(); }));
   last.appendChild(key("space", "grow", () => noteType(" ")));
-  last.appendChild(key("Delete", `wide-b danger ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
+  last.appendChild(key(note.armed ? "Confirm" : "Delete", `wide-b ${note.armed ? "armed" : "danger"} ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
   last.appendChild(key("Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
   last.appendChild(key("Save", `wide-b accent ${note.focus === NOTE_SAVE ? "focus" : ""}`, noteSave));
   keys.appendChild(last);
