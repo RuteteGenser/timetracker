@@ -4,7 +4,7 @@ import QtQuick
 // Knob: turn moves the outline between Delete, Skip and Save; press activates it.
 // Skip starts outlined, so a single press of the button dismisses the prompt.
 // Delete throws the timer that was just stopped away (its time no longer counts); it needs
-// two presses: the first turns it orange and says Confirm.
+// two presses: the first turns it dark red and says Confirm.
 Rectangle {
     id: root
     color: "#101216"

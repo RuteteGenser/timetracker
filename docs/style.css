@@ -79,7 +79,7 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .key.accent { background: #2f9a58; }
 .key.wide-s { flex: 0 0 130px; }
 .key.wide-b { flex: 0 0 170px; }
-.key.danger { background: #b8434d; }
-.key.armed { background: #e0701a; }  /* Delete after its first press */
+.key.danger { background: #d9363e; }
+.key.armed { background: #8b1a1f; }  /* Delete after its first press: dark red */
 .key.grow { flex: 1 1 auto; }
 .key.focus::before { content: ""; position: absolute; inset: 0; border: 4px solid #fff; border-radius: 4px; pointer-events: none; }

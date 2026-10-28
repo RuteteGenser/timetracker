@@ -239,7 +239,7 @@ function noteSkip() { // skips the note, or cancels the rename
 }
 
 // Throw away the timer that was just stopped (its time no longer counts).
-// The first press only arms the button (orange, "Confirm"); the second deletes.
+// The first press only arms the button (dark red, "Confirm"); the second deletes.
 function noteDelete() {
   if (note.kind !== "note") return;
   if (!note.armed) {
