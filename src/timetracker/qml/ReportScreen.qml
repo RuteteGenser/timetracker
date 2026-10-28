@@ -1,8 +1,9 @@
 import QtQuick
 
 // Day / week / month totals as a bar chart, one bar per project and a total on top.
-// Knob: turn moves the outline over Back, Day, Week, Month and the period; pressing a kind
-// selects it, pressing the period starts "stepping" (turn = older / newer, press to stop).
+// Knob: turn moves the outline over Back, Day, Week, Month, Entries and the period; pressing a kind
+// selects it, Entries lists the entries of the period shown, pressing the period starts "stepping"
+// (turn = older / newer, press to stop).
 // Touch: tap the buttons, and use the arrows beside the period.
 Rectangle {
     id: root
@@ -30,7 +31,7 @@ Rectangle {
         return m
     }
 
-    Row {   // Back, Day, Week, Month, then the period selector
+    Row {   // first row: Back, Day, Week, Month and Entries
         id: controls
         x: root.pad; y: root.pad
         spacing: root.gap
@@ -50,13 +51,24 @@ Rectangle {
                 onClicked: ctl.repTap(index + 1)
             }
         }
+        KeyButton {
+            u: root.u; width: root.buttonW; height: 76 * root.u
+            label: "Entries"; focused: ctl.repFocus === 4
+            onClicked: ctl.repTap(4)
+        }
+    }
+
+    Row {   // second row: the period (older, label, newer) and the total
+        x: root.pad; y: root.pad + 88 * root.u
+        spacing: root.gap
+
         KeyButton {   // older
             u: root.u; width: 76 * root.u; height: 76 * root.u
-            label: "◀"; opacity: ctl.repCanOlder ? 1 : 0.35
+            label: "\u25c0"; opacity: ctl.repCanOlder ? 1 : 0.35
             onClicked: ctl.repStep(-1)
         }
         Rectangle {   // the period being shown
-            width: root.width - 2 * root.pad - 4 * (root.buttonW + root.gap) - 2 * (76 * root.u + root.gap)
+            width: 480 * root.u
             height: 76 * root.u
             radius: 4 * root.u
             color: ctl.repStepping ? "#3274d1" : "#1f232b"
@@ -72,36 +84,32 @@ Rectangle {
                 minimumPixelSize: Math.max(1, 16 * root.u)
             }
             Rectangle {
-                visible: ctl.repFocus === 4
+                visible: ctl.repFocus === 5
                 anchors.fill: parent
                 radius: parent.radius
                 color: "transparent"
                 border.color: "#ffffff"
                 border.width: 6 * root.u
             }
-            MouseArea { anchors.fill: parent; onClicked: ctl.repTap(4) }
+            MouseArea { anchors.fill: parent; onClicked: ctl.repTap(5) }
         }
         KeyButton {   // newer
             u: root.u; width: 76 * root.u; height: 76 * root.u
-            label: "▶"; opacity: ctl.repCanNewer ? 1 : 0.35
+            label: "\u25b6"; opacity: ctl.repCanNewer ? 1 : 0.35
             onClicked: ctl.repStep(1)
         }
-    }
-
-    Row {   // the total
-        x: root.pad + 8 * root.u; y: root.pad + 96 * root.u
-        spacing: 20 * root.u
+        Item { width: 20 * root.u; height: 1 }
         Text {
-            anchors.baseline: totalText.baseline
+            anchors.verticalCenter: parent.verticalCenter
             text: "Total"
             color: "#aab2bf"
             font.pixelSize: 30 * root.u
         }
         Text {
-            id: totalText
+            anchors.verticalCenter: parent.verticalCenter
             text: root.span(ctl.repTotal)
             color: "#ffffff"
-            font.pixelSize: 56 * root.u
+            font.pixelSize: 52 * root.u
             font.bold: true
         }
     }

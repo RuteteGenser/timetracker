@@ -280,3 +280,95 @@ def test_archived_projects_lists_only_archived(db):
     assert [p.name for p in db.archived_projects()] == ["A"]
     db.archive_project(a, False)
     assert db.archived_projects() == []
+
+
+# -- update_entry --------------------------------------------------------------------------------------
+
+from timetracker.db import EntryError
+
+
+def two_entries(db, clock):
+    """Two finished entries: [t, t+600) and [t+1000, t+1600)."""
+    a, b = db.add_project("A", "#1"), db.add_project("B", "#2")
+    t = clock()
+    e1 = db.start(a); clock.advance(600); db.stop()
+    clock.advance(400)
+    e2 = db.start(b); clock.advance(600); db.stop()
+    clock.advance(100)
+    return a, b, db.get_entry(e1.id), db.get_entry(e2.id), t
+
+
+def test_update_entry_changes_project_note_and_times(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    updated = db.update_entry(e1.id, project_id=b, note="  fixed  ", start_ts=t - 100, end_ts=t + 500)
+    assert (updated.project_id, updated.note, updated.start_ts, updated.end_ts) == (b, "fixed", t - 100, t + 500)
+    assert db.get_entry(e1.id) == updated
+
+
+def test_end_must_be_after_start(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    with pytest.raises(EntryError, match="after the start"):
+        db.update_entry(e1.id, end_ts=e1.start_ts)
+    with pytest.raises(EntryError, match="after the start"):
+        db.update_entry(e1.id, start_ts=e1.end_ts + 5)
+    assert db.get_entry(e1.id) == e1          # nothing changed
+
+
+def test_nothing_may_lie_in_the_future(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    with pytest.raises(EntryError, match="future"):
+        db.update_entry(e2.id, end_ts=clock() + 3600)
+    db.update_entry(e2.id, end_ts=clock() + 30)           # a few seconds of clock slack are fine
+
+
+def test_an_entry_may_not_overlap_another(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    with pytest.raises(EntryError, match="overlaps"):
+        db.update_entry(e1.id, end_ts=e2.start_ts + 1)     # runs into the next entry
+    with pytest.raises(EntryError, match="overlaps"):
+        db.update_entry(e2.id, start_ts=e1.end_ts - 1)     # runs back into the previous one
+    db.update_entry(e2.id, start_ts=e1.end_ts)             # touching (end == start) is fine
+    assert db.get_entry(e2.id).start_ts == e1.end_ts
+
+
+def test_a_note_or_project_change_ignores_existing_overlaps(db, clock):
+    """Old data (e.g. from a clock set back) may already overlap: editing a note must still work."""
+    a, b, e1, e2, t = two_entries(db, clock)
+    db._conn.execute("UPDATE entries SET start_ts = ? WHERE id = ?", (e1.start_ts + 100, e2.id))   # force an overlap
+    db.update_entry(e2.id, note="still editable", project_id=a)
+    assert db.get_entry(e2.id).note == "still editable"
+
+
+def test_a_running_timer_has_no_end_to_set_but_its_start_can_move(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    run = db.start(a)
+    with pytest.raises(EntryError, match="no end"):
+        db.update_entry(run.id, end_ts=clock() + 10)
+    moved = db.update_entry(run.id, start_ts=run.start_ts - 50)
+    assert moved.start_ts == run.start_ts - 50 and moved.end_ts is None
+    with pytest.raises(EntryError, match="overlaps"):
+        db.update_entry(run.id, start_ts=e2.start_ts + 10)  # back into the previous entry
+
+
+def test_unknown_entry_project_and_fields(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    with pytest.raises(EntryError, match="no longer exists"):
+        db.update_entry(9999, note="x")
+    with pytest.raises(EntryError, match="project"):
+        db.update_entry(e1.id, project_id=9999)
+    with pytest.raises(ValueError):
+        db.update_entry(e1.id, id=5)
+
+
+def test_a_failed_update_changes_nothing(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    with pytest.raises(EntryError):
+        db.update_entry(e1.id, project_id=b, note="x", end_ts=e1.start_ts)
+    assert db.get_entry(e1.id) == e1
+
+
+def test_totals_follow_an_edited_entry(db, clock):
+    a, b, e1, e2, t = two_entries(db, clock)
+    before = db.totals(t - 10, t + 5000)
+    db.update_entry(e1.id, end_ts=e1.end_ts - 100)
+    assert db.totals(t - 10, t + 5000)[a] == before[a] - 100

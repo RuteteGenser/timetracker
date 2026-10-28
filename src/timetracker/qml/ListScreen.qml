@@ -48,7 +48,7 @@ Rectangle {
                 y: 8 * root.u + (index - ctl.listOffset) * (root.rowH + root.gap)
                 width: view.width - 16 * root.u
                 height: root.rowH
-                visible: index >= ctl.listOffset
+                visible: index >= ctl.listOffset && index < ctl.listOffset + ctl.listVisible
 
                 Rectangle {
                     id: body
@@ -57,17 +57,23 @@ Rectangle {
                     color: modelData.kind === "armed" ? "#8b1a1f"
                          : (modelData.kind === "danger" ? "#d9363e" : (modelData.id === "back" ? "#2a2f39" : "#1f232b"))
                     Text {
+                        id: valueText
+                        anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 28 * root.u }
+                        width: Math.min(implicitWidth, 520 * root.u)
+                        horizontalAlignment: Text.AlignRight
+                        text: modelData.value
+                        color: "#aab2bf"
+                        font.pixelSize: 30 * root.u
+                        elide: Text.ElideRight
+                    }
+                    Text {
                         anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 28 * root.u }
+                        width: parent.width - valueText.width - 84 * root.u
                         text: modelData.label
                         color: "#ffffff"
                         font.pixelSize: 34 * root.u
                         font.bold: true
-                    }
-                    Text {
-                        anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 28 * root.u }
-                        text: modelData.value
-                        color: "#aab2bf"
-                        font.pixelSize: 30 * root.u
+                        elide: Text.ElideRight
                     }
                 }
                 Rectangle {

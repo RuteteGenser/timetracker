@@ -100,6 +100,8 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 #list-note { position: absolute; left: 23px; right: 23px; top: 79px; margin: 0; font-size: 28px; color: #aab2bf; display: none; }
 #list.has-note #list-note { display: block; }
 #list.has-note #list-rows { top: 205px; }
+.lrow .label { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lrow .value { flex: none; max-width: 520px; margin-left: 24px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 /* Date & time */
 #dt { position: absolute; inset: 0; background: #101216; display: none; }
@@ -133,15 +135,17 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 #rep-controls { position: absolute; left: 15px; right: 15px; top: 15px; display: flex; gap: 12px; }
 #rep-controls .key { flex: none; width: 150px; height: 76px; }
 #rep-controls .key.active { background: #3274d1; }
-#rep-controls .key.arrow { width: 76px; }
-#rep-controls .key.dim { opacity: .35; }
-.rperiod { position: relative; flex: 1; height: 76px; border-radius: 4px; background: #1f232b; font-size: 30px; font-weight: 700;
+.rperiod { position: relative; height: 76px; border-radius: 4px; background: #1f232b; font-size: 30px; font-weight: 700;
   display: flex; align-items: center; justify-content: center; cursor: pointer; white-space: nowrap; overflow: hidden; padding: 0 10px; }
 .rperiod.stepping { background: #3274d1; }
 .rperiod.focus::before { content: ""; position: absolute; inset: 0; border: 6px solid #fff; border-radius: 4px; pointer-events: none; }
-#rep-total { position: absolute; left: 23px; top: 111px; display: flex; align-items: baseline; gap: 20px; }
-#rep-total .lbl { font-size: 30px; color: #aab2bf; }
-#rep-total-val { font-size: 56px; font-weight: 700; }
+#rep-period { position: absolute; left: 15px; top: 103px; display: flex; align-items: center; gap: 12px; }
+#rep-period .key { flex: none; width: 76px; height: 76px; }
+#rep-period .key.dim { opacity: .35; }
+#rep-period .rperiod { flex: none; width: 480px; }
+#rep-period .total { display: flex; align-items: baseline; gap: 20px; margin-left: 20px; }
+#rep-period .total .lbl { font-size: 30px; color: #aab2bf; }
+#rep-period .total .val { font-size: 52px; font-weight: 700; }
 #rep-chart { position: absolute; left: 15px; right: 15px; top: 205px; bottom: 15px; }
 #rep-chart .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #6b7380; }
 .rrow { position: relative; display: flex; align-items: center; }

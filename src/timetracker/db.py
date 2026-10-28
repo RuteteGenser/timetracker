@@ -40,6 +40,14 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
+class EntryError(ValueError):
+    """An entry change was refused; the message says why and is shown to the user."""
+
+
+FUTURE_TOLERANCE = 60  # seconds an entry time may be ahead of the clock
+INFINITY = 2**62  # a running entry has no end yet: for overlap checks it lasts "forever"
+
+
 @dataclass(frozen=True)
 class Project:
     id: int
@@ -239,6 +247,46 @@ class Database:
         """Remove one entry; its time no longer counts anywhere."""
         with self._tx():
             self._conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+
+    def update_entry(self, entry_id: int, **changes) -> Entry:
+        """Change an entry's project_id, start_ts, end_ts and/or note.
+
+        Time changes are checked: the end must be after the start, nothing may lie in the future,
+        the entry must not overlap another one, and a running timer has no end to set. Raises
+        EntryError (nothing is changed) when a rule is broken.
+        """
+        unknown = set(changes) - {"project_id", "start_ts", "end_ts", "note"}
+        if unknown:
+            raise ValueError(f"cannot change {sorted(unknown)}")
+        with self._tx():
+            row = self._conn.execute("SELECT * FROM entries WHERE id = ?", (entry_id,)).fetchone()
+            if row is None:
+                raise EntryError("This entry no longer exists.")
+            new = {k: row[k] for k in ("project_id", "start_ts", "end_ts", "note")}
+            new.update(changes)
+            if "project_id" in changes and self._conn.execute(
+                "SELECT 1 FROM projects WHERE id = ?", (new["project_id"],)
+            ).fetchone() is None:
+                raise EntryError("That project no longer exists.")
+            if "end_ts" in changes and row["end_ts"] is None:
+                raise EntryError("A running timer has no end yet.")
+            if "start_ts" in changes or "end_ts" in changes:
+                if new["end_ts"] is not None and new["end_ts"] <= new["start_ts"]:
+                    raise EntryError("The end must be after the start.")
+                limit = self.now() + FUTURE_TOLERANCE
+                if new["start_ts"] > limit or (new["end_ts"] or 0) > limit:
+                    raise EntryError("That time is in the future.")
+                clash = self._conn.execute(
+                    "SELECT 1 FROM entries WHERE id != ? AND start_ts < ? AND COALESCE(end_ts, ?) > ? LIMIT 1",
+                    (entry_id, new["end_ts"] if new["end_ts"] is not None else INFINITY, INFINITY, new["start_ts"]),
+                ).fetchone()
+                if clash:
+                    raise EntryError("That overlaps another entry.")
+            self._conn.execute(
+                "UPDATE entries SET project_id = ?, start_ts = ?, end_ts = ?, note = ? WHERE id = ?",
+                (new["project_id"], new["start_ts"], new["end_ts"], str(new["note"]).strip(), entry_id),
+            )
+        return self.get_entry(entry_id)
 
     def set_note(self, entry_id: int, note: str) -> None:
         with self._tx():

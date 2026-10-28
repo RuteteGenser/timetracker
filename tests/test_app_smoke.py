@@ -161,8 +161,8 @@ def test_reports_button_opens_reports_and_back_item_leaves(ui):
     key(window, Qt.Key.Key_Left)
     key(window, Qt.Key.Key_Space)
     assert ctl.screen == "reports"
-    for _ in range(4):
-        key(window, Qt.Key.Key_Left)       # Period -> Month -> Week -> Day -> Back
+    for _ in range(5):
+        key(window, Qt.Key.Key_Left)       # Period -> Entries -> Month -> Week -> Day -> Back
     assert ctl.repFocus == 0
     key(window, Qt.Key.Key_Space)
     assert ctl.screen == "main" and ctl.selected == 3
@@ -754,7 +754,7 @@ def rep_seconds(ctl):
 def test_reports_opens_on_today_with_the_period_focused(ui):
     ctl, window, _ = ui
     open_reports(window)
-    assert (ctl.repKind, ctl.repLabel, ctl.repFocus, ctl.repStepping) == ("day", "Today", 4, False)
+    assert (ctl.repKind, ctl.repLabel, ctl.repFocus, ctl.repStepping) == ("day", "Today", 5, False)
     assert ctl.repTotal == 0 and [r["name"] for r in ctl.repRows][:2] == ["Work", "Admin"]
     assert not ctl.repCanOlder and not ctl.repCanNewer
 
@@ -810,7 +810,7 @@ def test_week_and_month_kinds_sum_several_days(ui, clock):
 def test_the_period_label_for_a_week_covers_monday_to_sunday(ui):
     ctl, window, _ = ui
     open_reports(window, ctl)
-    key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left)   # Entries, Month, Week
     key(window, Qt.Key.Key_Space)
     assert ctl.repKind == "week" and "\u2013" in ctl.repLabel
 
@@ -850,3 +850,238 @@ def test_changing_kind_keeps_the_period_inside_the_limits(ui, clock):
     assert ctl.repLabel == "Today"
     ctl.repTap(3)                                       # Month
     assert ctl.repKind == "month" and not ctl.repCanOlder and not ctl.repCanNewer
+
+
+# -- Entries: browse and edit -------------------------------------------------------------------------
+
+from datetime import datetime as _dt2
+
+
+def open_entries(window, ctl):
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Left)                         # Period -> Entries
+    key(window, Qt.Key.Key_Space)
+
+
+def row_by_id(ctl, id_):
+    return next(r for r in ctl.listRows if r["id"] == id_)
+
+
+def entry_ids(ctl):
+    return [int(r["id"].split(":")[1]) for r in ctl.listRows if r["id"].startswith("entry:")]
+
+
+def open_first_entry(window, ctl):
+    open_entries(window, ctl)
+    key(window, Qt.Key.Key_Space)                        # the first (newest) entry row is outlined
+    assert ctl.screen == "entryedit"
+
+
+def test_entries_lists_the_period_newest_first(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    clock.advance(1000)
+    track(window, clock, 300)
+    open_entries(window, ctl)
+    assert ctl.screen == "entries" and ctl.screenIsList and ctl.listTitle == "Entries \u00b7 Today"
+    ids = entry_ids(ctl)
+    assert len(ids) == 2 and ids[0] > ids[1]             # newest first
+    assert ctl.listSelected == 1 and ctl.listRows[1]["value"] == "5m 00s"
+    assert ctl.listRows[2]["value"] == "10m 00s" and "Work" in ctl.listRows[2]["label"]
+
+
+def test_entries_of_a_week_include_earlier_days_and_empty_periods_say_so(ui, clock):
+    ctl, window, _ = ui
+    open_entries(window, ctl)
+    assert [r["id"] for r in ctl.listRows] == ["back", "none"] and ctl.listSelected == 1
+    key(window, Qt.Key.Key_Space)                        # the "No entries" row does nothing
+    assert ctl.screen == "entries"
+    key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Space)    # Back
+    assert ctl.screen == "reports"
+    ctl.repTap(0)                                        # Back to the main screen
+    track(window, clock, 600)
+    open_reports(window, ctl)
+    ctl.repTap(2)                                        # Week
+    ctl.repTap(4)                                        # Entries
+    assert len(entry_ids(ctl)) == 1 and "Entries" in ctl.listTitle and "\u2013" in ctl.listTitle
+
+
+def test_back_from_entries_returns_to_reports_with_its_state(ui, clock):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_reports(window, ctl)
+    ctl.repTap(2)
+    ctl.repTap(4)
+    ctl.back()
+    assert ctl.screen == "reports" and ctl.repKind == "week"
+
+
+def test_an_entry_row_opens_the_editor(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    assert [r["id"] for r in ctl.listRows] == ["back", "project", "start", "end", "note", "delete"]
+    assert row_by_id(ctl, "project")["value"] == "Work" and row_by_id(ctl, "note")["value"] == "none"
+    assert ctl.listTitle == "Edit entry" and "saved as you make" in ctl.listNote
+    key(window, Qt.Key.Key_Left)                         # Done
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "entries" and ctl.listSelected == 1     # the outline returned to the row
+
+
+def test_the_project_row_cycles_the_projects(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    key(window, Qt.Key.Key_Space)                        # Project is outlined first: Work -> Admin
+    assert row_by_id(ctl, "project")["value"] == "Admin"
+    entry = db.entries_between(0, 2**40)[0]
+    assert db.get_project(entry.project_id).name == "Admin"
+    for _ in range(5):
+        key(window, Qt.Key.Key_Space)                    # ... and round the six projects back to Work
+    assert row_by_id(ctl, "project")["value"] == "Work"
+
+
+def test_a_note_can_be_edited_and_cancelled(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    for _ in range(3):
+        key(window, Qt.Key.Key_Right)                    # Note row
+    assert ctl.listRows[ctl.listSelected]["id"] == "note"
+    key(window, Qt.Key.Key_Space)
+    assert ctl.notePromptOpen and ctl.noteKind == "entrynote" and ctl.noteText == "" and ctl.noteProject == "Work"
+    ctl.noteType("Quarterly report")
+    key(window, Qt.Key.Key_Space)                        # Cancel is outlined by default
+    assert db.entries_between(0, 2**40)[0].note == ""
+    key(window, Qt.Key.Key_Space)                        # open again
+    ctl.noteType("Quarterly report")
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Space)    # Save
+    assert db.entries_between(0, 2**40)[0].note == "Quarterly report"
+    assert row_by_id(ctl, "note")["value"] == "Quarterly report" and ctl.screen == "entryedit"
+    assert ctl.listRows[ctl.listSelected]["id"] == "note"
+
+
+def test_start_and_end_use_the_date_and_time_screen(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    entry = db.entries_between(0, 2**40)[0]
+    open_first_entry(window, ctl)
+    key(window, Qt.Key.Key_Right)                        # Start row
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "datetime" and ctl.dtTitle == "Entry start"
+    d = _dt2.fromtimestamp(entry.start_ts)
+    assert list(ctl.dtFields) == [d.year, d.month, d.day, d.hour, d.minute]
+    ctl.dtAdjust(4, +1)                                  # one minute later (a minute field wraps inside its hour)
+    ctl.dtSave()
+    assert ctl.screen == "entryedit" and ctl.listRows[ctl.listSelected]["id"] == "start"
+    assert db.get_entry(entry.id).start_ts == int(_dt2(d.year, d.month, d.day, d.hour, (d.minute + 1) % 60).timestamp())
+    key(window, Qt.Key.Key_Right)                        # End row
+    key(window, Qt.Key.Key_Space)
+    assert ctl.dtTitle == "Entry end"
+    ctl.dtAdjust(4, +2)
+    ctl.dtSave()
+    assert db.get_entry(entry.id).end_ts is not None
+
+
+def test_an_impossible_time_is_refused_and_explained(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    entry = db.entries_between(0, 2**40)[0]
+    open_first_entry(window, ctl)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)   # End row
+    key(window, Qt.Key.Key_Space)
+    ctl.dtAdjust(3, -2)                                  # two hours earlier: before the start
+    ctl.dtSave()
+    assert ctl.screen == "datetime" and "after the start" in ctl.dtError
+    assert db.get_entry(entry.id) == entry
+    ctl.dtAdjust(3, 100)                                 # back to the original hour
+    ctl.dtAdjust(3, 100)
+    ctl.back()                                           # Back from the editor screen: no change made
+    assert ctl.screen == "entryedit" and db.get_entry(entry.id) == entry
+
+
+def test_an_overlap_is_refused(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)                            # [t, t+600)
+    clock.advance(1000)
+    track(window, clock, 300)                            # [t+1600, t+1900); now = t+1900
+    older, newer = db.entries_between(0, 2**40)
+    open_entries(window, ctl)
+    key(window, Qt.Key.Key_Right)                        # the older entry (second row)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)   # End row
+    key(window, Qt.Key.Key_Space)
+    ctl.dtAdjust(4, 17)                                  # +17 minutes: past the newer entry's start, not in the future
+    ctl.dtSave()
+    assert ctl.screen == "datetime" and "overlaps" in ctl.dtError
+    assert db.get_entry(older.id) == older
+
+
+def test_the_end_of_a_running_timer_cannot_be_edited(ui, clock, db):
+    ctl, window, _ = ui
+    key(window, Qt.Key.Key_Space)                        # start Work
+    clock.advance(120)
+    open_first_entry(window, ctl)
+    assert row_by_id(ctl, "end")["value"] == "running"
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                        # End
+    assert ctl.screen == "datetime" and ctl.dtTitle == "Entry end"
+    ctl.dtAdjust(4, 1)
+    ctl.dtSave()
+    assert "no end yet" in ctl.dtError and db.running() is not None
+
+
+def test_deleting_an_entry_needs_two_presses_and_updates_the_reports(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    for _ in range(4):
+        key(window, Qt.Key.Key_Right)                    # Delete
+    row = ctl.listRows[ctl.listSelected]
+    assert row["id"] == "delete" and row["kind"] == "danger"
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "entryedit" and ctl.listRows[ctl.listSelected]["kind"] == "armed"
+    assert len(db.entries_between(0, 2**40)) == 1
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "entries" and db.entries_between(0, 2**40) == []
+    assert [r["id"] for r in ctl.listRows] == ["back", "none"]
+    ctl.back()
+    assert ctl.screen == "reports" and ctl.repTotal == 0
+
+
+def test_turning_away_cancels_a_pending_entry_delete(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    for _ in range(4):
+        key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                        # armed
+    key(window, Qt.Key.Key_Left)
+    assert all(r["kind"] != "armed" for r in ctl.listRows)
+    assert len(db.entries_between(0, 2**40)) == 1
+
+
+def test_edits_show_up_in_the_reports_and_the_main_screen_totals(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)   # End row
+    key(window, Qt.Key.Key_Space)
+    ctl.dtAdjust(4, -3)                                  # ends three minutes earlier
+    ctl.dtSave()
+    ctl.back(); ctl.back()                               # editor -> entries -> reports
+    assert ctl.screen == "reports" and ctl.repTotal == 600 - 180
+
+
+def test_a_list_with_a_note_shows_one_row_less_and_still_reaches_every_row(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 600)
+    open_first_entry(window, ctl)
+    assert ctl.listVisible == 5 and len(ctl.listRows) == 6
+    for _ in range(6):
+        key(window, Qt.Key.Key_Right)
+    assert ctl.listRows[ctl.listSelected]["id"] == "delete"
+    assert ctl.listOffset <= ctl.listSelected < ctl.listOffset + ctl.listVisible
+    ctl.back(); ctl.back(); ctl.back()
+    ctl.tap(0)                                  # Settings: no note, six rows fit
+    assert ctl.listVisible == 6

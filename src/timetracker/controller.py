@@ -9,11 +9,11 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
 from .clock import ACK_REF, LAST_SEEN, ClockBackend, ClockError, check_clock, clock_reference
 from .colors import COLOR_CYCLE, next_color
-from .db import Database, Entry
+from .db import Database, Entry, EntryError
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
 from .summaries import KINDS, period_bounds, shift_period, step_limits, summary
-from .timeutil import day_bounds
+from .timeutil import day_bounds, span_text
 
 # Text prompt buttons, left to right; the knob button presses the focused one.
 # The note prompt has all three, the rename prompt only Cancel (= NOTE_SKIP) and Save.
@@ -37,9 +37,11 @@ SCREEN_PARENT = {  # where Back goes
     "style": "main", "settings": "main", "reports": "main", "clockwarn": "main",
     "datetime": "settings", "status": "settings",
     "projectmenu": "style", "archived": "style", "archivedmenu": "archived",
+    "entries": "reports", "entryedit": "entries",
 }
-LIST_SCREENS = {"settings", "clockwarn", "projectmenu", "archived", "archivedmenu"}
+LIST_SCREENS = {"settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit"}
 LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check", "archived": "Archived projects"}
+NOTE_LISTS = {"clockwarn", "entryedit"}  # list screens with an explanation under the title
 
 # Date & time screen: five fields, then Cancel and Save. The knob moves the outline over them;
 # pressing a field edits it (turn changes the value, press again to finish).
@@ -48,11 +50,13 @@ DT_CANCEL = 5
 DT_SAVE = 6
 HEARTBEAT_SECONDS = 60
 
-# Reports screen: focusable items left to right. Back, the three period kinds, and the period itself:
-# pressing the period starts "stepping", where the knob moves to older / newer periods.
+# Reports screen: focusable items left to right. Back, the three period kinds, Entries (the entries
+# of the period shown) and the period itself: pressing the period starts "stepping", where the knob
+# moves to older / newer periods.
 REP_BACK = 0
-REP_PERIOD = 4
-REP_ITEMS = 5
+REP_ENTRIES = 4
+REP_PERIOD = 5
+REP_ITEMS = 6
 
 
 class Controller(QObject):
@@ -90,6 +94,11 @@ class Controller(QObject):
         self._rep_stepping = False
         self._rep_data: dict = {"label": "", "total": 0, "rows": []}
         self._rep_limits = (0, 0)
+        self._entry_id: int | None = None  # entry open in the editor
+        self._entry_error = ""  # why the last change to it was refused
+        self._entry_note = False  # the text prompt is editing that entry's note
+        self._dt_entry_field: str | None = None  # "start" or "end" while Date & time edits an entry
+        self._list_memory: dict[str, int] = {}  # selected row of list screens we left, restored on Back
         self._last_second = -1
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
@@ -148,6 +157,10 @@ class Controller(QObject):
         if self._screen in ("projectmenu", "archivedmenu"):
             project = self._db.get_project(self._menu_pid) if self._menu_pid is not None else None
             return project.name if project else ""
+        if self._screen == "entries":
+            return f"Entries \u00b7 {self._rep_data['label']}"
+        if self._screen == "entryedit":
+            return "Edit entry"
         return LIST_TITLES.get(self._screen, "")
 
     @Property("QVariantList", notify=listChanged)
@@ -162,9 +175,20 @@ class Controller(QObject):
     def listOffset(self):
         return self._list.offset
 
+    @Property(int, notify=listChanged)
+    def listVisible(self):
+        """How many rows fit on screen; the rows after that wait for the knob to scroll."""
+        return self._list.visible
+
     @Property(str, notify=screenChanged)
     def listNote(self):
+        if self._screen == "entryedit":
+            return self._entry_error or "Changes are saved as you make them."
         return self._clock_problem if self._screen == "clockwarn" else ""
+
+    @Property(str, notify=dtChanged)
+    def dtTitle(self):
+        return {"start": "Entry start", "end": "Entry end"}.get(self._dt_entry_field, "Date & time")
 
     @Property("QVariantList", notify=dtChanged)
     def dtFields(self):
@@ -239,6 +263,8 @@ class Controller(QObject):
     def noteKind(self):
         if self._adding:
             return "add"
+        if self._entry_note:
+            return "entrynote"
         return "rename" if self._rename_id is not None else "note"
 
     @Property(str, notify=noteChanged)
@@ -255,8 +281,9 @@ class Controller(QObject):
 
     @Property(str, notify=noteChanged)
     def noteProject(self):
+        entry = self._db.get_entry(self._entry_id) if self._entry_note and self._entry_id is not None else None
         project_id = self._rename_id if self._rename_id is not None else (
-            self._note_entry.project_id if self._note_entry is not None else None
+            self._note_entry.project_id if self._note_entry is not None else (entry.project_id if entry else None)
         )
         project = self._db.get_project(project_id) if project_id is not None else None
         return project.name if project else ""
@@ -315,11 +342,19 @@ class Controller(QObject):
             self._screen = screen
             self.screenChanged.emit()
 
-    def _open_screen(self, screen: str) -> None:
-        """Show a screen; list screens get fresh rows and selection."""
+    def _open_screen(self, screen: str, restore: bool = False) -> None:
+        """Show a screen. List screens get fresh rows; with restore (coming Back) the outline returns
+        to the row that was open, otherwise it starts on the first real row."""
+        if screen == "reports":
+            self._rep_refresh()  # the entries may have been edited meanwhile
         if screen in LIST_SCREENS:
+            self._entry_error = ""
             self._list_rows = self._rows_for(screen)
-            self._list = ListNav(len(self._list_rows), default=0 if screen == "clockwarn" else None)
+            # a note under the title leaves room for one row less
+            visible = 5 if screen in NOTE_LISTS else 6
+            self._list = ListNav(len(self._list_rows), visible=visible, default=0 if screen == "clockwarn" else None)
+            if restore and screen in self._list_memory:
+                self._list.select(self._list_memory[screen])
             self.listChanged.emit()
         self._set_screen(screen)
 
@@ -353,12 +388,46 @@ class Controller(QObject):
             return [row("back", "Back")] + [row(f"project:{p.id}", p.name, "Restore or delete") for p in archived]
         if screen == "archivedmenu":
             return [row("back", "Cancel"), row("restore", "Restore"), delete]
+        if screen == "entries":
+            return self._entry_rows(row)
+        if screen == "entryedit":
+            entry = self._db.get_entry(self._entry_id) if self._entry_id is not None else None
+            if entry is None:
+                return [row("back", "Back")]
+            project = self._db.get_project(entry.project_id)
+            return [
+                row("back", "Done"),
+                row("project", "Project", project.name if project else "?"),
+                row("start", "Start", f"{datetime.fromtimestamp(entry.start_ts):%d %b %Y  %H:%M}"),
+                row("end", "End", "running" if entry.end_ts is None else f"{datetime.fromtimestamp(entry.end_ts):%d %b %Y  %H:%M}"),
+                row("note", "Note", entry.note or "none"),
+                delete,
+            ]
         return []
+
+    def _entry_rows(self, row) -> list[dict]:
+        """The entries of the period shown in Reports, newest first."""
+        names = {p.id: p.name for p in self._db.list_projects(include_archived=True)}
+        rows = [row("back", "Back")]
+        for e in reversed(self._db.entries_between(self._rep_data["start"], self._rep_data["end"])):
+            start = datetime.fromtimestamp(e.start_ts)
+            if e.end_ts is None:
+                end, duration = "now", "running"
+            else:
+                stop = datetime.fromtimestamp(e.end_ts)
+                end = f"{stop:%H:%M}" if stop.date() == start.date() else f"{stop:%d %b %H:%M}"
+                duration = span_text(e.end_ts - e.start_ts)
+            label = f"{start:%d %b}  {start:%H:%M}\u2013{end}  {names.get(e.project_id, '?')}" + ("  \u270e" if e.note else "")
+            rows.append(row(f"entry:{e.id}", label, duration))
+        if len(rows) == 1:
+            rows.append(row("none", "No entries in this period"))
+        return rows
 
     def _activate_list(self, index: int) -> None:
         if not 0 <= index < len(self._list_rows):
             return
         row_id = self._list_rows[index]["id"]
+        self._list_memory[self._screen] = index
         if row_id == "back":
             self.back()
         elif row_id == "ignore":
@@ -373,6 +442,16 @@ class Controller(QObject):
             self._menu_delete()
         elif row_id == "restore":
             self._menu_restore()
+        elif row_id.startswith("entry:"):
+            self._entry_id = int(row_id.split(":", 1)[1])
+            self._menu_armed = False
+            self._open_screen("entryedit")
+        elif row_id == "project":
+            self._entry_cycle_project()
+        elif row_id in ("start", "end"):
+            self._open_datetime(return_to="entryedit", entry_field=row_id)
+        elif row_id == "note":
+            self._open_entry_note()
         elif row_id.startswith("project:"):
             self._menu_pid = int(row_id.split(":", 1)[1])
             self._menu_armed = False
@@ -462,7 +541,7 @@ class Controller(QObject):
             self._use_nav(StripNav(self._nav.project_count))
             self._set_screen("main")
         else:
-            self._open_screen(parent)
+            self._open_screen(parent, restore=True)
 
     def _activate(self, index: int) -> None:
         if self._screen == "style":
@@ -560,6 +639,12 @@ class Controller(QObject):
             self._list_rows = self._rows_for(self._screen)
             self.listChanged.emit()
             return
+        if self._screen == "entryedit":
+            self._db.delete_entry(self._entry_id)
+            self._refresh_times()
+            self._menu_armed = False
+            self._open_screen("entries", restore=True)
+            return
         card = self._menu_card()
         from_archive = self._screen == "archivedmenu"
         self._db.delete_project(self._menu_pid)
@@ -608,7 +693,7 @@ class Controller(QObject):
     # -- text prompt: note after a stop, or renaming a project ------------------------------
 
     def _prompt_open(self) -> bool:
-        return self._note_entry is not None or self._rename_id is not None or self._adding
+        return self._note_entry is not None or self._rename_id is not None or self._adding or self._entry_note
 
     def _open_note(self, entry: Entry) -> None:
         self._note_entry = entry
@@ -630,6 +715,7 @@ class Controller(QObject):
         self._note_entry = None
         self._rename_id = None
         self._adding = False
+        self._entry_note = False
         self._note_text = ""
         self._note_focus = NOTE_SKIP
         self._delete_armed = False
@@ -651,7 +737,16 @@ class Controller(QObject):
 
     @Slot()
     def noteSave(self) -> None:
-        if self._adding:
+        if self._entry_note:
+            text = self._note_text
+            self._close_note()
+            try:
+                self._db.update_entry(self._entry_id, note=text)
+            except EntryError as exc:
+                self._entry_error = str(exc)
+            self._list_rows = self._rows_for("entryedit")
+            self.listChanged.emit()
+        elif self._adding:
             name = self._note_text.strip()
             self._close_note()
             if name:
@@ -725,8 +820,13 @@ class Controller(QObject):
         self._clock_problem = ""
         self.back()
 
-    def _open_datetime(self, return_to: str | None = None) -> None:
-        now = datetime.fromtimestamp(self._clock())
+    def _open_datetime(self, return_to: str | None = None, entry_field: str | None = None) -> None:
+        self._dt_entry_field = entry_field
+        shown = self._clock()
+        if entry_field:
+            entry = self._db.get_entry(self._entry_id)
+            shown = entry.start_ts if entry_field == "start" else (entry.end_ts or entry.start_ts)
+        now = datetime.fromtimestamp(shown)
         self._dt_initial = [now.year, now.month, now.day, now.hour, now.minute]
         self._dt_fields = list(self._dt_initial)
         self._dt_focus = 0
@@ -785,6 +885,17 @@ class Controller(QObject):
             self.back()
             return
         year, month, day, hour, minute = self._dt_fields
+        if self._dt_entry_field:  # editing an entry's start or end, not the clock
+            try:
+                self._db.update_entry(
+                    self._entry_id, **{f"{self._dt_entry_field}_ts": int(datetime(year, month, day, hour, minute).timestamp())}
+                )
+            except EntryError as exc:
+                self._dt_error = str(exc)
+                self.dtChanged.emit()
+                return
+            self.back()
+            return
         if self._backend is None:
             self._dt_error = "This clock cannot be set."
             self.dtChanged.emit()
@@ -839,8 +950,10 @@ class Controller(QObject):
     def _rep_press(self) -> None:
         if self._rep_focus == REP_BACK:
             self.back()
-        elif self._rep_focus < REP_PERIOD:
+        elif self._rep_focus < REP_ENTRIES:
             self._rep_set_kind(KINDS[self._rep_focus - 1])
+        elif self._rep_focus == REP_ENTRIES:
+            self._open_entries()
         else:
             self._rep_stepping = not self._rep_stepping
             self.repChanged.emit()
@@ -857,8 +970,10 @@ class Controller(QObject):
     def _rep_press_item(self, item: int) -> None:
         if item == REP_BACK:
             self.back()
-        elif item < REP_PERIOD:
+        elif item < REP_ENTRIES:
             self._rep_set_kind(KINDS[item - 1])
+        elif item == REP_ENTRIES:
+            self._open_entries()
         else:
             self.repChanged.emit()
 
@@ -867,3 +982,30 @@ class Controller(QObject):
         """Touch: the arrows beside the period label."""
         if self._screen == "reports":
             self._rep_step(steps)
+
+    # -- entries: browse and edit ---------------------------------------------------------------------
+
+    def _open_entries(self) -> None:
+        self._open_screen("entries")
+
+    def _open_entry_note(self) -> None:
+        entry = self._db.get_entry(self._entry_id)
+        self._entry_note = True
+        self._note_text = entry.note
+        self._note_focus = NOTE_SKIP
+        self._delete_armed = False
+        self.noteChanged.emit()
+
+    def _entry_cycle_project(self) -> None:
+        """Give the entry to the next project (archived ones only if it already belongs to one)."""
+        entry = self._db.get_entry(self._entry_id)
+        ids = [p.id for p in self._db.list_projects(include_archived=True) if not p.archived or p.id == entry.project_id]
+        target = ids[(ids.index(entry.project_id) + 1) % len(ids)]
+        try:
+            self._db.update_entry(self._entry_id, project_id=target)
+            self._entry_error = ""
+        except EntryError as exc:
+            self._entry_error = str(exc)
+        self._list_rows = self._rows_for("entryedit")
+        self.listChanged.emit()
+        self.screenChanged.emit()  # the note under the title may have changed

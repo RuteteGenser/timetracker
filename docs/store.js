@@ -3,6 +3,10 @@
 
 const KEY = "timetracker.v1";
 
+/** An entry change was refused; the message says why and is shown to the user. */
+export class EntryError extends Error {}
+const FUTURE_TOLERANCE = 60; // seconds an entry time may be ahead of the clock
+
 // Mirrors src/timetracker/clock.py. The browser's own clock cannot be set, so "set date and time"
 // keeps an offset (`clockOffset`) that is added to it.
 export const MIN_PLAUSIBLE = new Date(2026, 0, 1).getTime() / 1000; // the software was made in 2026
@@ -251,6 +255,41 @@ export class Store {
     this.data.clockAck = this.clockReference();
     this.data.lastSeen = this.now();
     this.#save();
+  }
+
+  entry(id) {
+    return this.data.entries.find((e) => e.id === id) ?? null;
+  }
+
+  /** Entries overlapping [start, end), oldest first. A running entry counts up to now. */
+  entriesBetween(start, end) {
+    const now = this.now();
+    return this.data.entries.filter((e) => e.start < end && (e.end ?? now) > start).sort((a, b) => a.start - b.start || a.id - b.id);
+  }
+
+  /**
+   * Change an entry's projectId, start, end and/or note. Time changes are checked: the end must be
+   * after the start, nothing may lie in the future, the entry must not overlap another one, and a
+   * running timer has no end to set. Throws EntryError (nothing is changed) when a rule is broken.
+   */
+  updateEntry(id, changes) {
+    const e = this.entry(id);
+    if (!e) throw new EntryError("This entry no longer exists.");
+    const unknown = Object.keys(changes).filter((k) => !["projectId", "start", "end", "note"].includes(k));
+    if (unknown.length) throw new Error(`cannot change ${unknown}`);
+    const next = { projectId: e.projectId, start: e.start, end: e.end, note: e.note, ...changes };
+    if ("projectId" in changes && !this.data.projects.some((p) => p.id === next.projectId)) throw new EntryError("That project no longer exists.");
+    if ("end" in changes && e.end === null) throw new EntryError("A running timer has no end yet.");
+    if ("start" in changes || "end" in changes) {
+      if (next.end !== null && next.end <= next.start) throw new EntryError("The end must be after the start.");
+      const limit = this.now() + FUTURE_TOLERANCE;
+      if (next.start > limit || (next.end ?? 0) > limit) throw new EntryError("That time is in the future.");
+      const clash = this.data.entries.some((o) => o.id !== id && o.start < (next.end ?? Infinity) && (o.end ?? Infinity) > next.start);
+      if (clash) throw new EntryError("That overlaps another entry.");
+    }
+    Object.assign(e, { projectId: next.projectId, start: next.start, end: next.end, note: String(next.note).trim() });
+    this.#save();
+    return e;
   }
 
   /** Remove one entry; its time no longer counts anywhere. */

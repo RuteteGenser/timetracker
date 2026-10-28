@@ -514,3 +514,92 @@ test("changes to projects persist", () => {
   assert.ok(!again.projects().some((p) => p.id === a.id));
   assert.equal(again.archivedProjects().length, 1);
 });
+
+// -- entries: updateEntry and entriesBetween -----------------------------------------------------------
+
+import { EntryError } from "../../docs/store.js";
+
+function twoEntries() {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  const [a, b] = s.projects();
+  const t = state.t;
+  const e1 = s.start(a.id); state.t += 600; s.stop();
+  state.t += 400;
+  const e2 = s.start(b.id); state.t += 600; s.stop();
+  state.t += 100;
+  return { s, a, b, e1, e2, t, state };
+}
+
+const refused = (fn, pattern) => assert.throws(fn, (err) => err instanceof EntryError && pattern.test(err.message));
+
+test("updateEntry changes project, note and times", () => {
+  const { s, b, e1, t } = twoEntries();
+  const u = s.updateEntry(e1.id, { projectId: b.id, note: "  fixed  ", start: t - 100, end: t + 500 });
+  assert.deepEqual([u.projectId, u.note, u.start, u.end], [b.id, "fixed", t - 100, t + 500]);
+});
+
+test("the end must be after the start", () => {
+  const { s, e1 } = twoEntries();
+  const before = { ...e1 };
+  refused(() => s.updateEntry(e1.id, { end: e1.start }), /after the start/);
+  refused(() => s.updateEntry(e1.id, { start: e1.end + 5 }), /after the start/);
+  assert.deepEqual({ ...s.entry(e1.id) }, before);
+});
+
+test("nothing may lie in the future", () => {
+  const { s, e2, state } = twoEntries();
+  refused(() => s.updateEntry(e2.id, { end: state.t + 3600 }), /future/);
+  s.updateEntry(e2.id, { end: state.t + 30 }); // a few seconds of clock slack are fine
+});
+
+test("an entry may not overlap another, but touching is fine", () => {
+  const { s, e1, e2 } = twoEntries();
+  refused(() => s.updateEntry(e1.id, { end: e2.start + 1 }), /overlaps/);
+  refused(() => s.updateEntry(e2.id, { start: e1.end - 1 }), /overlaps/);
+  s.updateEntry(e2.id, { start: e1.end });
+  assert.equal(s.entry(e2.id).start, e1.end);
+});
+
+test("a note or project change ignores overlaps that already exist", () => {
+  const { s, a, e1, e2 } = twoEntries();
+  s.entry(e2.id).start = e1.start + 100; // force an overlap, like old data from a clock set back
+  s.updateEntry(e2.id, { note: "still editable", projectId: a.id });
+  assert.equal(s.entry(e2.id).note, "still editable");
+});
+
+test("a running timer's end cannot be set, but its start can move", () => {
+  const { s, a, e2, state } = twoEntries();
+  const run = s.start(a.id);
+  refused(() => s.updateEntry(run.id, { end: state.t + 10 }), /no end/);
+  assert.equal(s.updateEntry(run.id, { start: run.start - 50 }).end, null);
+  refused(() => s.updateEntry(run.id, { start: e2.start + 10 }), /overlaps/);
+});
+
+test("unknown entry, project and fields", () => {
+  const { s, e1 } = twoEntries();
+  refused(() => s.updateEntry(9999, { note: "x" }), /no longer exists/);
+  refused(() => s.updateEntry(e1.id, { projectId: 9999 }), /project/);
+  assert.throws(() => s.updateEntry(e1.id, { id: 5 }), (err) => !(err instanceof EntryError));
+});
+
+test("a failed update changes nothing", () => {
+  const { s, b, e1 } = twoEntries();
+  const before = { ...e1 };
+  refused(() => s.updateEntry(e1.id, { projectId: b.id, note: "x", end: e1.start }), /after the start/);
+  assert.deepEqual({ ...s.entry(e1.id) }, before);
+});
+
+test("entriesBetween returns overlapping entries oldest first", () => {
+  const { s, e1, e2, t } = twoEntries();
+  assert.deepEqual(s.entriesBetween(t - 10, t + 5000).map((e) => e.id), [e1.id, e2.id]);
+  assert.deepEqual(s.entriesBetween(t + 700, t + 900), []);
+  assert.deepEqual(s.entriesBetween(t + 100, t + 200).map((e) => e.id), [e1.id]);
+});
+
+test("totals follow an edited entry", () => {
+  const { s, a, e1, t } = twoEntries();
+  const before = s.totals(t - 10, t + 5000)[a.id];
+  s.updateEntry(e1.id, { end: e1.end - 100 });
+  assert.equal(s.totals(t - 10, t + 5000)[a.id], before - 100);
+});

@@ -33,12 +33,12 @@ Rectangle {
         Row {
             spacing: 16 * root.u
             Text {
-                text: ctl.noteKind === "rename" ? "Rename" : (ctl.noteKind === "add" ? "New project" : "What did you do?")
+                text: ctl.noteKind === "rename" ? "Rename" : (ctl.noteKind === "add" ? "New project" : (ctl.noteKind === "entrynote" ? "Note" : "What did you do?"))
                 color: "#ffffff"; font.pixelSize: 38 * root.u; font.bold: true
             }
             Text {
                 anchors.baseline: parent.children[0].baseline
-                text: ctl.noteKind !== "note" ? (ctl.noteKind === "rename" ? ctl.noteProject : "")
+                text: ctl.noteKind !== "note" ? (ctl.noteKind === "add" ? "" : ctl.noteProject)
                                              : ctl.noteProject + "  ·  " + root.span(ctl.noteSeconds)
                 color: "#aab2bf"; font.pixelSize: 28 * root.u
             }
@@ -50,7 +50,7 @@ Rectangle {
             Text {
                 anchors { fill: parent; margins: 18 * root.u }
                 verticalAlignment: Text.AlignVCenter
-                text: ctl.noteText.length ? ctl.noteText + "▏" : (ctl.noteKind !== "note" ? "Name…" : "Optional note…")
+                text: ctl.noteText.length ? ctl.noteText + "▏" : (ctl.noteKind === "entrynote" ? "Note…" : (ctl.noteKind !== "note" ? "Name…" : "Optional note…"))
                 color: ctl.noteText.length ? "#ffffff" : "#6b7380"
                 font.pixelSize: 34 * root.u
                 elide: Text.ElideLeft

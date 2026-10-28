@@ -4,7 +4,7 @@
 // The rules mirror src/timetracker/controller.py.
 
 import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
-import { Store, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
+import { Store, EntryError, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
 import { KINDS, periodBounds, shiftPeriod, stepLimits, summary } from "./summaries.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
@@ -24,9 +24,10 @@ let screen = "main"; // a key of SCREEN_PARENT, or "main"
 // Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
 const SCREEN_PARENT = { // where Back goes
   style: "main", settings: "main", reports: "main", clockwarn: "main", datetime: "settings", status: "settings",
-  projectmenu: "style", archived: "style", archivedmenu: "archived",
+  projectmenu: "style", archived: "style", archivedmenu: "archived", entries: "reports", entryedit: "entries",
 };
-const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu"]);
+const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit"]);
+const NOTE_LISTS = new Set(["clockwarn", "entryedit"]); // list screens with an explanation under the title (one row less fits)
 const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check", archived: "Archived projects" };
 const PLACEHOLDER_TITLES = { status: "Status" };
 let clockProblem = ""; // message of the clock warning being shown
@@ -36,6 +37,10 @@ let listRows = []; // rows of the current list screen: { id, label, value }
 let resetArmed = null; // Style item whose time reset waits for its confirming second press
 let menuPid = null; // project the open menu (More / Archived) is about
 let menuArmed = false; // Delete in that menu was pressed once and waits for confirmation
+let entryId = null; // entry open in the editor
+let entryError = ""; // why the last change to it was refused
+let dtEntryField = null; // "start" or "end" while Date & time edits an entry
+const listMemory = {}; // selected row of list screens we left, restored on Back
 
 const stage = document.getElementById("stage");
 const strip = document.getElementById("strip");
@@ -165,9 +170,9 @@ function renderNav() {
 
 function renderList() {
   document.getElementById("list-title").textContent = listTitle();
-  const note = screen === "clockwarn" ? clockProblem : "";
-  document.getElementById("list-note").textContent = note;
-  document.getElementById("list").classList.toggle("has-note", note !== "");
+  const noteText = listNote();
+  document.getElementById("list-note").textContent = noteText;
+  document.getElementById("list").classList.toggle("has-note", noteText !== "");
   const box = document.getElementById("list-rows");
   box.replaceChildren();
   listRows.slice(list.offset, list.offset + list.visible).forEach((r, i) => {
@@ -188,7 +193,14 @@ function listTitle() {
   if (screen === "projectmenu" || screen === "archivedmenu") {
     return store.data.projects.find((p) => p.id === menuPid)?.name ?? "";
   }
+  if (screen === "entries") return `Entries \u00b7 ${rep.data.label}`;
+  if (screen === "entryedit") return "Edit entry";
   return LIST_TITLES[screen];
+}
+
+function listNote() {
+  if (screen === "entryedit") return entryError || "Changes are saved as you make them.";
+  return screen === "clockwarn" ? clockProblem : "";
 }
 
 function rowsFor(name) {
@@ -215,14 +227,61 @@ function rowsFor(name) {
     return [row("back", "Back"), ...archived.map((p) => row(`project:${p.id}`, p.name, "Restore or delete"))];
   }
   if (name === "archivedmenu") return [row("back", "Cancel"), row("restore", "Restore"), del];
+  if (name === "entries") return entryRows(row);
+  if (name === "entryedit") {
+    const e = store.entry(entryId);
+    if (!e) return [row("back", "Back")];
+    const project = store.data.projects.find((p) => p.id === e.projectId);
+    return [
+      row("back", "Done"),
+      row("project", "Project", project?.name ?? "?"),
+      row("start", "Start", fmtFull(e.start)),
+      row("end", "End", e.end === null ? "running" : fmtFull(e.end)),
+      row("note", "Note", e.note || "none"),
+      del,
+    ];
+  }
   return [];
 }
 
-/** Show a screen; list screens get fresh rows and selection. */
-function openScreen(name) {
+const monthShort = (d) => d.toLocaleString("en", { month: "short" });
+const fmtDate = (d) => `${d.getDate()} ${monthShort(d)}`; // 28 Oct
+const fmtTime = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`; // 09:15
+const fmtFull = (ts) => { const d = new Date(ts * 1000); return `${pad(d.getDate())} ${monthShort(d)} ${d.getFullYear()}  ${fmtTime(d)}`; };
+
+/** The entries of the period shown in Reports, newest first. */
+function entryRows(row) {
+  const names = Object.fromEntries(store.data.projects.map((p) => [p.id, p.name]));
+  const rows = [row("back", "Back")];
+  for (const e of store.entriesBetween(rep.data.start, rep.data.end).reverse()) {
+    const start = new Date(e.start * 1000);
+    let end, duration;
+    if (e.end === null) {
+      end = "now";
+      duration = "running";
+    } else {
+      const stop = new Date(e.end * 1000);
+      end = stop.toDateString() === start.toDateString() ? fmtTime(stop) : `${fmtDate(stop)} ${fmtTime(stop)}`;
+      duration = span(e.end - e.start);
+    }
+    const label = `${fmtDate(start)}  ${fmtTime(start)}\u2013${end}  ${names[e.projectId] ?? "?"}${e.note ? "  \u270e" : ""}`;
+    rows.push(row(`entry:${e.id}`, label, duration));
+  }
+  if (rows.length === 1) rows.push(row("none", "No entries in this period"));
+  return rows;
+}
+
+/**
+ * Show a screen. List screens get fresh rows; with restore (coming Back) the outline returns to the
+ * row that was open, otherwise it starts on the first real row.
+ */
+function openScreen(name, restore = false) {
+  if (name === "reports") repRefresh(); // the entries may have been edited meanwhile
   if (LIST_SCREENS.has(name)) {
+    entryError = "";
     listRows = rowsFor(name);
-    list = new ListNav(listRows.length, 6, name === "clockwarn" ? 0 : null);
+    list = new ListNav(listRows.length, NOTE_LISTS.has(name) ? 5 : 6, name === "clockwarn" ? 0 : null);
+    if (restore && name in listMemory) list.select(listMemory[name]);
   }
   screen = name;
 }
@@ -230,6 +289,7 @@ function openScreen(name) {
 function activateList(index) {
   const r = listRows[index];
   if (!r) return;
+  listMemory[screen] = index;
   if (r.id === "back") back();
   else if (r.id === "ignore") ignoreClockProblem();
   else if (r.id === "datetime") openDatetime(screen === "clockwarn" ? "main" : null);
@@ -237,6 +297,10 @@ function activateList(index) {
   else if (r.id === "moveleft" || r.id === "moveright") menuMove(r.id === "moveleft" ? -1 : 1);
   else if (r.id === "delete") menuDelete();
   else if (r.id === "restore") menuRestore();
+  else if (r.id.startsWith("entry:")) { entryId = Number(r.id.slice(6)); menuArmed = false; openScreen("entryedit"); }
+  else if (r.id === "project") entryCycleProject();
+  else if (r.id === "start" || r.id === "end") openDatetime("entryedit", r.id);
+  else if (r.id === "note") openEntryNote();
   else if (r.id.startsWith("project:")) { menuPid = Number(r.id.slice(8)); menuArmed = false; openScreen("archivedmenu"); }
   else if (r.id === "none") return;
   else openScreen(r.id);
@@ -378,6 +442,13 @@ function menuDelete() {
     listRows = rowsFor(screen);
     return;
   }
+  if (screen === "entryedit") {
+    store.deleteEntry(entryId);
+    renderTimes();
+    menuArmed = false;
+    openScreen("entries", true);
+    return;
+  }
   const card = menuCard();
   const fromArchive = screen === "archivedmenu";
   store.deleteProject(menuPid);
@@ -408,7 +479,7 @@ function back() { // go up one level; the main screen comes back in its default 
     useNav(new StripNav(nav.projectCount));
     screen = "main";
   } else {
-    openScreen(parent);
+    openScreen(parent, true);
   }
   renderNav();
 }
@@ -437,13 +508,39 @@ function tap(index) {
   activate(index);
 }
 
+// -- entries: browse and edit ------------------------------------------------------------------
+
+/** Give the entry to the next project (archived ones only if it already belongs to one). */
+function entryCycleProject() {
+  const e = store.entry(entryId);
+  const ids = store.data.projects.filter((p) => !p.archived || p.id === e.projectId).map((p) => p.id);
+  try {
+    store.updateEntry(entryId, { projectId: ids[(ids.indexOf(e.projectId) + 1) % ids.length] });
+    entryError = "";
+  } catch (err) {
+    if (!(err instanceof EntryError)) throw err;
+    entryError = err.message;
+  }
+  listRows = rowsFor("entryedit");
+}
+
+function openEntryNote() {
+  const e = store.entry(entryId);
+  const project = store.data.projects.find((p) => p.id === e.projectId);
+  note = { kind: "entrynote", project, text: e.note, focus: NOTE_SKIP, shift: e.note === "", armed: false };
+  document.getElementById("note-title").textContent = "Note";
+  document.getElementById("note-sub").textContent = project.name;
+  renderNote();
+}
+
 // -- reports ----------------------------------------------------------------------------------
 
-// Focusable items left to right: Back, Day, Week, Month, and the period itself. Pressing the period
-// starts "stepping": turn = older / newer period, press again to stop.
+// Focusable items left to right: Back, Day, Week, Month, Entries (the entries of the period shown) and
+// the period itself. Pressing the period starts "stepping": turn = older / newer period, press again to stop.
 const REP_BACK = 0;
-const REP_PERIOD = 4;
-const REP_ITEMS = 5;
+const REP_ENTRIES = 4;
+const REP_PERIOD = 5;
+const REP_ITEMS = 6;
 let rep = { kind: "day", anchor: 0, focus: REP_PERIOD, stepping: false, data: null, limits: [0, 0] };
 
 function openReports() {
@@ -478,13 +575,14 @@ function repSetKind(kind) {
 
 function repPressItem(item) {
   if (item === REP_BACK) back();
-  else if (item < REP_PERIOD) repSetKind(KINDS[item - 1]);
+  else if (item < REP_ENTRIES) repSetKind(KINDS[item - 1]);
+  else if (item === REP_ENTRIES) { openScreen("entries"); renderNav(); }
 }
 
 function repPress() {
   if (rep.focus < REP_PERIOD) repPressItem(rep.focus);
   else rep.stepping = !rep.stepping;
-  renderNav();
+  if (screen === "reports") renderNav();
 }
 
 function repTap(item) {
@@ -496,8 +594,6 @@ function repTap(item) {
 
 function renderRep() {
   const d = rep.data;
-  const controls = document.getElementById("rep-controls");
-  controls.replaceChildren();
   const key = (label, cls, onClick) => {
     const k = document.createElement("div");
     k.className = `key ${cls}`;
@@ -505,19 +601,29 @@ function renderRep() {
     k.addEventListener("click", onClick);
     return k;
   };
+  const controls = document.getElementById("rep-controls"); // first row: Back, Day, Week, Month, Entries
+  controls.replaceChildren();
   controls.appendChild(key("Back", rep.focus === 0 ? "focus" : "", () => repTap(0)));
   ["Day", "Week", "Month"].forEach((label, i) => {
     controls.appendChild(key(label, `${rep.kind === KINDS[i] ? "active" : ""} ${rep.focus === i + 1 ? "focus" : ""}`, () => repTap(i + 1)));
   });
-  controls.appendChild(key("\u25c0", `arrow ${d.start > rep.limits[0] ? "" : "dim"}`, () => repStep(-1)));
-  const period = document.createElement("div");
-  period.className = `rperiod ${rep.stepping ? "stepping" : ""} ${rep.focus === REP_PERIOD ? "focus" : ""}`;
-  period.textContent = d.label;
-  period.addEventListener("click", () => repTap(REP_PERIOD));
-  controls.appendChild(period);
-  controls.appendChild(key("\u25b6", `arrow ${d.start < rep.limits[1] ? "" : "dim"}`, () => repStep(1)));
+  controls.appendChild(key("Entries", rep.focus === REP_ENTRIES ? "focus" : "", () => repTap(REP_ENTRIES)));
 
-  document.getElementById("rep-total-val").textContent = repSpan(d.total);
+  const period = document.getElementById("rep-period"); // second row: older, the period, newer and the total
+  period.replaceChildren();
+  period.appendChild(key("\u25c0", d.start > rep.limits[0] ? "" : "dim", () => repStep(-1)));
+  const label = document.createElement("div");
+  label.className = `rperiod ${rep.stepping ? "stepping" : ""} ${rep.focus === REP_PERIOD ? "focus" : ""}`;
+  label.textContent = d.label;
+  label.addEventListener("click", () => repTap(REP_PERIOD));
+  period.appendChild(label);
+  period.appendChild(key("\u25b6", d.start < rep.limits[1] ? "" : "dim", () => repStep(1)));
+  const total = document.createElement("div");
+  total.className = "total";
+  total.innerHTML = '<span class="lbl">Total</span><span class="val"></span>';
+  total.querySelector(".val").textContent = repSpan(d.total);
+  period.appendChild(total);
+
   const chart = document.getElementById("rep-chart");
   chart.replaceChildren();
   if (d.total === 0) {
@@ -586,8 +692,14 @@ function ignoreClockProblem() {
   back();
 }
 
-function openDatetime(returnScreen = null) {
-  const d = new Date(store.now() * 1000);
+function openDatetime(returnScreen = null, entryField = null) {
+  dtEntryField = entryField;
+  let shown = store.now();
+  if (entryField) {
+    const e = store.entry(entryId);
+    shown = entryField === "start" ? e.start : (e.end ?? e.start);
+  }
+  const d = new Date(shown * 1000);
   dt = { initial: [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()], focus: 0, editing: false, error: "" };
   dt.fields = [...dt.initial];
   returnTo = returnScreen;
@@ -615,13 +727,27 @@ function dtPress() {
 function dtSave() { // a running timer keeps its elapsed time
   if (dt.fields.every((v, i) => v === dt.initial[i])) { back(); return; }
   const [y, mo, d, h, mi] = dt.fields;
-  store.setTime(Math.floor(new Date(y, mo - 1, d, h, mi).getTime() / 1000));
+  const newTs = Math.floor(new Date(y, mo - 1, d, h, mi).getTime() / 1000);
+  if (dtEntryField) { // editing an entry's start or end, not the clock
+    try {
+      store.updateEntry(entryId, { [dtEntryField]: newTs });
+    } catch (err) {
+      if (!(err instanceof EntryError)) throw err;
+      dt.error = err.message;
+      renderNav();
+      return;
+    }
+    back();
+    return;
+  }
+  store.setTime(newTs);
   clockProblem = "";
   renderTimes();
   back();
 }
 
 function renderDt() {
+  document.getElementById("dt-title").textContent = { start: "Entry start", end: "Entry end" }[dtEntryField] ?? "Date & time";
   const hint = document.getElementById("dt-hint");
   hint.textContent = dt.error || "Turn to move, press to change a field, then Save.";
   hint.classList.toggle("error", dt.error !== "");
@@ -701,6 +827,19 @@ function noteClose() {
 }
 
 function noteSave() {
+  if (note.kind === "entrynote") {
+    const text = note.text;
+    noteClose();
+    try {
+      store.updateEntry(entryId, { note: text });
+    } catch (err) {
+      if (!(err instanceof EntryError)) throw err;
+      entryError = err.message;
+    }
+    listRows = rowsFor("entryedit");
+    renderNav();
+    return;
+  }
   if (note.kind === "add") {
     const name = note.text.trim();
     noteClose();
@@ -763,7 +902,7 @@ function renderNote() {
   renderTimes();
   if (!note) return;
   noteText.classList.toggle("empty", note.text === "");
-  noteText.textContent = note.text === "" ? (note.kind !== "note" ? "Name…" : "Optional note…") : note.text + "▏";
+  noteText.textContent = note.text === "" ? (note.kind === "entrynote" ? "Note…" : (note.kind !== "note" ? "Name…" : "Optional note…")) : note.text + "▏";
   const keys = document.getElementById("note-keys");
   keys.replaceChildren();
   const key = (label, cls, onClick) => {

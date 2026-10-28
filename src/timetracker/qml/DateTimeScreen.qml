@@ -22,7 +22,7 @@ Rectangle {
         x: root.pad + 8 * root.u; y: root.pad
         height: 60 * root.u
         verticalAlignment: Text.AlignVCenter
-        text: "Date & time"
+        text: ctl.dtTitle
         color: "#ffffff"
         font.pixelSize: 40 * root.u
         font.bold: true
