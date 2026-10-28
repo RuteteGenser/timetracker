@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Time tracker</title>
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=13">
 </head>
 <body>
 <div id="stage">
@@ -13,21 +13,22 @@
       <div id="column">
         <div class="colbtn" id="btn-settings">Settings</div>
         <div class="colbtn" id="btn-style">Style</div>
+        <div class="colbtn" id="btn-back">Back</div>
       </div>
     </div>
   </div>
   <div id="note">
-    <div class="note-head"><span class="note-title">What did you do?</span><span id="note-sub"></span></div>
+    <div class="note-head"><span class="note-title" id="note-title">What did you do?</span><span id="note-sub"></span></div>
     <div id="note-text"></div>
     <div id="note-keys"></div>
   </div>
   <div id="overlay">
-    <h1 id="overlay-title"></h1>
+    <h1 id="overlay-title">Settings</h1>
     <p>Coming in a later milestone. Press Space or tap Back.</p>
     <div class="back" id="overlay-back">Back</div>
   </div>
 </div>
 <div id="hint">&larr; &rarr; turn the knob (mouse wheel works too) &middot; Space presses the button &middot; or just tap &middot; typing works in the note prompt</div>
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=13"></script>
 </body>
 </html>

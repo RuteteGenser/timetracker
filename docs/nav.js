@@ -1,9 +1,11 @@
-// Selection and scrolling logic of the main strip.
-// Mirrors src/timetracker/nav.py; keep the two in sync.
+// Selection and scrolling logic of the strip. Mirrors src/timetracker/nav.py; keep the two in sync.
 //
-// Linear item order, left to right: Settings, Style, project 1, project 2, ...
-// The screen is split into equal slots: slot 0 is the Settings/Style column, slot k is
-// project k. Five slots are visible; `offset` is the first visible slot.
+// Main screen items, left to right: Settings, Style, project 1, project 2, ...
+// The screen is split into equal slots: slot 0 is the column, slot k is project k.
+// Five slots are visible; `offset` is the first visible slot.
+//
+// The Style screen uses the same strip with other items: one column item (Back) and
+// three items per card (colour, name, time). See `new StripNav(count, 1, 3)`.
 
 export const SETTINGS = 0;
 export const STYLE = 1;
@@ -12,18 +14,32 @@ export const VISIBLE_SLOTS = 5;
 export const SCROLL_AT = 3; // selecting the 4th visible slot starts scrolling
 
 export class StripNav {
-  constructor(projectCount = 0) {
+  constructor(projectCount = 0, columnItems = 2, parts = 1) {
     this.projectCount = projectCount;
+    this.columnItems = columnItems;
+    this.parts = parts;
     this.selected = this.#default();
-    this.offset = 0; // first visible slot; 0 shows the Settings/Style column
+    this.offset = 0; // first visible slot; 0 shows the column
+  }
+
+  /** Index of the first card item. */
+  get first() {
+    return this.columnItems;
   }
 
   #default() {
-    return this.projectCount ? FIRST_PROJECT : SETTINGS;
+    return this.projectCount ? this.first : 0;
   }
 
   get last() {
-    return this.projectCount ? FIRST_PROJECT + this.projectCount - 1 : STYLE;
+    return this.projectCount ? this.first + this.projectCount * this.parts - 1 : this.columnItems - 1;
+  }
+
+  /** [card, part] of the selection, or [-1, -1] while a column item is selected. */
+  cardAndPart() {
+    if (this.selected < this.first) return [-1, -1];
+    const i = this.selected - this.first;
+    return [Math.floor(i / this.parts), i % this.parts];
   }
 
   reset() {
@@ -37,7 +53,7 @@ export class StripNav {
 
   select(index) {
     const before = [this.selected, this.offset];
-    this.selected = Math.max(SETTINGS, Math.min(this.last, index));
+    this.selected = Math.max(0, Math.min(this.last, index));
     this.#follow();
     return this.selected !== before[0] || this.offset !== before[1];
   }
@@ -49,12 +65,12 @@ export class StripNav {
       this.reset();
       return;
     }
-    this.selected = Math.max(SETTINGS, Math.min(this.last, this.selected));
+    this.selected = Math.max(0, Math.min(this.last, this.selected));
     this.#follow();
   }
 
   #follow() {
-    const slot = this.selected < FIRST_PROJECT ? 0 : this.selected - FIRST_PROJECT + 1;
+    const slot = this.cardAndPart()[0] + 1; // slot 0 is the column
     let offset = this.offset;
     if (slot < offset) offset = slot;
     else if (slot - offset >= SCROLL_AT) offset = slot - SCROLL_AT + 1;

@@ -58,14 +58,15 @@ Item {
             color: "#ffffff"
             font.pixelSize: 36 * root.u
             font.bold: true
+            wrapMode: Text.Wrap       // a long name wraps onto a second line
+            maximumLineCount: 2
             elide: Text.ElideRight
-            wrapMode: Text.NoWrap
         }
 
         Text {   // static marker: no animation, the Pi should stay idle
             visible: root.running
             anchors { left: parent.left; right: parent.right; top: parent.top
-                      margins: 24 * root.u; topMargin: 112 * root.u }
+                      margins: 24 * root.u; topMargin: 170 * root.u }
             text: "\u25cf RUNNING"
             color: "#ffffff"
             font.pixelSize: 24 * root.u

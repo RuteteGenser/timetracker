@@ -20,7 +20,7 @@ Window {
     Item {
         id: mainScreen
         anchors.fill: parent
-        visible: ctl.screen === "main"
+        visible: ctl.screen !== "settings"
 
         // Cards scrolled out of view are cut off at the margin, not drawn into it.
         Item {
@@ -39,7 +39,8 @@ Window {
             x: -ctl.viewOffset * win.tileW
             Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
-            Column {
+            Column {   // main screen: Settings and Style
+                visible: ctl.screen === "main"
                 width: win.colW
                 height: parent.height
                 ColumnButton {
@@ -54,8 +55,15 @@ Window {
                 }
             }
 
+            ColumnButton {   // style screen: one Back button
+                visible: ctl.screen === "style"
+                width: win.colW; height: parent.height; u: win.u
+                label: "Back"; selected: ctl.selected === 0
+                onTapped: ctl.tap(0)
+            }
+
             Repeater {
-                model: projects
+                model: ctl.screen === "main" ? projects : 0
                 Tile {
                     x: (index + 1) * win.tileW
                     width: win.tileW
@@ -66,8 +74,25 @@ Window {
                     today: model.today
                     elapsed: model.elapsed
                     running: model.running
-                    selected: ctl.selected === index + 2
+                    selected: ctl.selectedCard === index
                     onTapped: ctl.tap(index + 2)
+                }
+            }
+
+            // Style screen: every card is split into colour, name and time.
+            Repeater {
+                model: ctl.screen === "style" ? projects : 0
+                StyleTile {
+                    x: (index + 1) * win.tileW
+                    width: win.tileW
+                    height: strip.height
+                    u: win.u
+                    projectName: model.projectName
+                    tileColor: model.tileColor
+                    today: model.today
+                    selectedPart: ctl.selectedCard === index ? ctl.selectedPart : -1
+                    resetArmed: ctl.resetArmed && ctl.selectedCard === index
+                    onPartTapped: (part) => ctl.tap(1 + 3 * index + part)
                 }
             }
         }
@@ -76,9 +101,9 @@ Window {
 
     Loader {
         anchors.fill: parent
-        active: ctl.screen !== "main"
+        active: ctl.screen === "settings"
         sourceComponent: Placeholder {
-            title: ctl.screen === "settings" ? "Settings" : "Style"
+            title: "Settings"
             note: "Coming in a later milestone. Press the button to go back."
         }
     }

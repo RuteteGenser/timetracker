@@ -173,3 +173,71 @@ def test_delete_entry_removes_its_time(db, clock):
     db.delete_entry(e.id)
     assert db.get_entry(e.id) is None
     assert db.totals(t0 - 1, t0 + 1000) == {}
+
+
+# -- reset_day ------------------------------------------------------------------------------
+
+DAY = 86_400
+
+
+def day_of(clock):
+    start = clock() - clock() % DAY  # any fixed 24 h window will do
+    return start, start + DAY
+
+
+def test_reset_day_removes_todays_entries_only_for_that_project(db, clock):
+    a, b = db.add_project("A", "#1"), db.add_project("B", "#2")
+    day_start, day_end = day_of(clock)
+    clock.t = day_start + 3600
+    db.start(a); clock.advance(600)
+    db.start(b); clock.advance(300)
+    db.stop()
+    db.reset_day(a, day_start, day_end)
+    assert db.totals(day_start, day_end) == {b: 300}
+
+
+def test_reset_day_keeps_other_days(db, clock):
+    p = db.add_project("A", "#1")
+    day_start, day_end = day_of(clock)
+    clock.t = day_start - 7200            # yesterday
+    db.start(p); clock.advance(1000); db.stop()
+    clock.t = day_start + 100             # today
+    db.start(p); clock.advance(500); db.stop()
+    db.reset_day(p, day_start, day_end)
+    assert db.totals(day_start, day_end) == {}
+    assert db.totals(day_start - DAY, day_start) == {p: 1000}
+
+
+def test_reset_day_cuts_an_entry_that_runs_in_from_yesterday(db, clock):
+    p = db.add_project("A", "#1")
+    day_start, day_end = day_of(clock)
+    clock.t = day_start - 600             # 10 minutes before midnight
+    db.start(p); clock.advance(1200); db.stop()   # 10 min yesterday, 10 min today
+    assert db.totals(day_start, day_end) == {p: 600}
+    db.reset_day(p, day_start, day_end)
+    assert db.totals(day_start, day_end) == {}
+    assert db.totals(day_start - DAY, day_start) == {p: 600}
+
+
+def test_reset_day_restarts_a_running_timer_from_now(db, clock):
+    p = db.add_project("A", "#1")
+    day_start, day_end = day_of(clock)
+    clock.t = day_start + 1000
+    db.start(p)
+    clock.advance(500)
+    db.reset_day(p, day_start, day_end)
+    running = db.running()
+    assert running.project_id == p and running.start_ts == clock()
+    assert db.totals(day_start, day_end) == {p: 0} or db.totals(day_start, day_end) == {}
+
+
+def test_reset_day_on_a_timer_that_started_yesterday_keeps_yesterdays_part(db, clock):
+    p = db.add_project("A", "#1")
+    day_start, day_end = day_of(clock)
+    clock.t = day_start - 900
+    db.start(p)
+    clock.t = day_start + 600
+    db.reset_day(p, day_start, day_end)
+    assert db.totals(day_start - DAY, day_start) == {p: 900}   # yesterday's part stays
+    assert db.running().start_ts == clock()                    # and a new timer runs from now
+    assert db.totals(day_start, day_end) in ({p: 0}, {})

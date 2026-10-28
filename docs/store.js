@@ -3,8 +3,17 @@
 
 const KEY = "timetracker.v1";
 
+// The Style screen steps through these on every press (dark enough for white text).
+export const COLOR_CYCLE = ["#c8424e", "#d9722f", "#b8861b", "#2f9a58", "#1a948f", "#3274d1", "#9250b4", "#cc4a93"];
+
+/** The colour after `current` in COLOR_CYCLE; an unknown colour starts the cycle. */
+export function nextColor(current) {
+  const i = COLOR_CYCLE.indexOf(String(current).toLowerCase());
+  return i < 0 ? COLOR_CYCLE[0] : COLOR_CYCLE[(i + 1) % COLOR_CYCLE.length];
+}
+
 const STARTERS = [
-  ["Work", "#3274d1"], ["Admin", "#9250b4"], ["Learning", "#85665a"],
+  ["Work", "#3274d1"], ["Admin", "#9250b4"], ["Learning", "#1a948f"],
   ["Meetings", "#c8424e"], ["Personal", "#b8861b"], ["Other", "#2f9a58"],
 ];
 
@@ -85,6 +94,52 @@ export class Store {
     this.#stopRunning(this.now());
     this.#save();
     return run;
+  }
+
+  setProjectColor(projectId, color) {
+    const p = this.data.projects.find((x) => x.id === projectId);
+    if (p) {
+      p.color = color;
+      this.#save();
+    }
+  }
+
+  renameProject(projectId, name) {
+    const p = this.data.projects.find((x) => x.id === projectId);
+    if (p && name.trim()) {
+      p.name = name.trim();
+      this.#save();
+    }
+  }
+
+  /**
+   * Zero a project's total for today. Entries inside today are deleted, ones that run in
+   * from yesterday are cut at midnight, and a running timer restarts from now.
+   */
+  resetToday(projectId) {
+    const now = this.now();
+    const [dayStart, dayEnd] = dayBounds(now);
+    const keep = [];
+    for (const e of this.data.entries) {
+      if (e.projectId !== projectId) {
+        keep.push(e);
+      } else if (e.end === null) {
+        if (e.start >= dayStart) {
+          e.start = now;
+          keep.push(e);
+        } else {                       // started before today: keep that part, restart now
+          e.end = dayStart;
+          keep.push(e, { id: this.data.nextId++, projectId, start: now, end: null, note: "" });
+        }
+      } else if (e.start >= dayStart && e.end <= dayEnd) {
+        // finished inside today: removed
+      } else {
+        if (e.start < dayStart && e.end > dayStart && e.end <= dayEnd) e.end = dayStart;
+        keep.push(e);
+      }
+    }
+    this.data.entries = keep;
+    this.#save();
   }
 
   /** Remove one entry; its time no longer counts anywhere. */

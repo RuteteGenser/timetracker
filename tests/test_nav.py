@@ -107,3 +107,60 @@ def test_first_projects_appearing_selects_the_first_project():
     n = StripNav(0)
     n.set_project_count(6)
     assert (n.selected, n.offset) == (FIRST_PROJECT, 0)
+
+
+# -- Style screen: one Back item, three parts per card -----------------------------------
+
+def style_nav(n=7):
+    return StripNav(n, column_items=1, parts=3)
+
+
+def test_style_default_is_first_cards_color():
+    n = style_nav()
+    assert n.selected == 1
+    assert n.card_and_part() == (0, 0)
+
+
+def test_style_knob_visits_color_name_time_then_next_card():
+    n = style_nav()
+    seen = []
+    for _ in range(5):
+        seen.append(n.card_and_part())
+        n.move(1)
+    assert seen == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+
+
+def test_style_counter_clockwise_from_first_part_reaches_back():
+    n = style_nav()
+    n.move(-1)
+    assert n.selected == 0 and n.card_and_part() == (-1, -1)
+    n.move(-1)
+    assert n.selected == 0
+
+
+def test_style_scrolls_when_the_fourth_card_is_reached():
+    n = style_nav()
+    for _ in range(3 * 2 + 2):          # card 2 (Admin), last part
+        n.move(1)
+    assert n.card_and_part() == (2, 2) and n.offset == 1   # Learning is the 4th slot: scrolled
+    n = style_nav()
+    for _ in range(3 * 1 + 2):
+        n.move(1)
+    assert n.card_and_part() == (1, 2) and n.offset == 0
+
+
+def test_style_every_part_is_visible():
+    for count in range(0, 10):
+        n = style_nav(count)
+        for step in [1] * (3 * count + 3) + [-1] * (3 * count + 4):
+            n.move(step)
+            card, _ = n.card_and_part()
+            slot = card + 1
+            assert n.offset <= slot < n.offset + 5
+
+
+def test_main_nav_card_and_part():
+    n = nav()
+    assert n.card_and_part() == (0, 0)
+    n.move(-1)
+    assert n.card_and_part() == (-1, -1)

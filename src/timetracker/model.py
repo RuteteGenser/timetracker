@@ -49,6 +49,14 @@ class ProjectModel(QAbstractListModel):
         self._rows = [dict(p, today=0, elapsed=0, running=False) for p in projects]
         self.endResetModel()
 
+    def set_color(self, row: int, color: str) -> None:
+        self._rows[row]["color"] = color
+        self.dataChanged.emit(self.index(row), self.index(row), [self.ColorRole])
+
+    def set_name(self, row: int, name: str) -> None:
+        self._rows[row]["name"] = name
+        self.dataChanged.emit(self.index(row), self.index(row), [self.NameRole])
+
     def set_times(self, today: dict[int, int], running_id: int | None, elapsed: int) -> None:
         """Update the live columns without resetting the view."""
         for r in self._rows:

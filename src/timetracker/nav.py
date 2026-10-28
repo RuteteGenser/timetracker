@@ -2,7 +2,8 @@
 
 Linear item order, left to right: Settings, Style, project 1, project 2, ...
 Settings and Style are stacked in one column on screen; the knob steps through
-them as two separate items.
+them as two separate items. The Style screen uses the same strip with different
+items (see StripNav).
 
 The screen is split into equal slots: slot 0 is the Settings/Style column,
 slot k is project k. Five slots are visible; `offset` is the first visible slot.
@@ -16,20 +17,39 @@ SCROLL_AT = 3  # selecting the 4th visible slot starts scrolling (a card is alwa
 
 
 class StripNav:
-    def __init__(self, project_count: int = 0):
+    """Selection over [column items..., then `parts` items per project card].
+
+    Main screen: two column items (Settings, Style), one item per card.
+    Style screen: one column item (Back), three items per card (colour, name, time).
+    """
+
+    def __init__(self, project_count: int = 0, column_items: int = 2, parts: int = 1):
         self.project_count = project_count
+        self.column_items = column_items
+        self.parts = parts
         self.selected = self._default()
-        self.offset = 0  # first visible slot; 0 shows the Settings/Style column
+        self.offset = 0  # first visible slot; 0 shows the column
+
+    @property
+    def first(self) -> int:
+        """Index of the first card item."""
+        return self.column_items
 
     def _default(self) -> int:
-        return FIRST_PROJECT if self.project_count else SETTINGS
+        return self.first if self.project_count else 0
 
     @property
     def last(self) -> int:
-        return FIRST_PROJECT + self.project_count - 1 if self.project_count else STYLE
+        return self.first + self.project_count * self.parts - 1 if self.project_count else self.column_items - 1
+
+    def card_and_part(self) -> tuple[int, int]:
+        """(card index, part) of the selection, or (-1, -1) while a column item is selected."""
+        if self.selected < self.first:
+            return -1, -1
+        return divmod(self.selected - self.first, self.parts)
 
     def reset(self) -> None:
-        """Default view: first project selected, column visible."""
+        """Default view: first card selected, column visible."""
         self.selected = self._default()
         self.offset = 0
 
@@ -39,7 +59,7 @@ class StripNav:
     def select(self, index: int) -> bool:
         """Select an item, clamped to the ends. Returns True if anything changed."""
         before = (self.selected, self.offset)
-        self.selected = max(SETTINGS, min(self.last, index))
+        self.selected = max(0, min(self.last, index))
         self._follow()
         return (self.selected, self.offset) != before
 
@@ -49,12 +69,13 @@ class StripNav:
         if count and not had_projects:
             self.reset()  # first projects appeared: start on the first one
             return
-        self.selected = max(SETTINGS, min(self.last, self.selected))
+        self.selected = max(0, min(self.last, self.selected))
         self._follow()
 
     def _follow(self) -> None:
         """Scroll when the selection reaches the 4th visible slot, or leaves on the left."""
-        slot = 0 if self.selected < FIRST_PROJECT else self.selected - FIRST_PROJECT + 1
+        card, _ = self.card_and_part()
+        slot = card + 1  # slot 0 is the column
         offset = self.offset
         if slot < offset:
             offset = slot

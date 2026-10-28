@@ -134,3 +134,136 @@ test("store: deleting an entry removes its time", () => {
   assert.deepEqual(s.totals(t0 - 1, t0 + 1000), {});
   assert.equal(s.data.entries.length, 0);
 });
+
+// -- Style screen ---------------------------------------------------------------------------
+
+import { COLOR_CYCLE, nextColor } from "../../docs/store.js";
+
+const styleNav = (n = 7) => new StripNav(n, 1, 3);
+
+test("style: default is the first card's colour part", () => {
+  const n = styleNav();
+  assert.equal(n.selected, 1);
+  assert.deepEqual(n.cardAndPart(), [0, 0]);
+});
+
+test("style: the knob visits colour, name, time, then the next card", () => {
+  const n = styleNav();
+  const seen = [];
+  for (let i = 0; i < 5; i++) { seen.push(n.cardAndPart()); n.move(1); }
+  assert.deepEqual(seen, [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1]]);
+});
+
+test("style: counter-clockwise from the first part reaches Back", () => {
+  const n = styleNav();
+  n.move(-1);
+  assert.deepEqual([n.selected, ...n.cardAndPart()], [0, -1, -1]);
+  n.move(-1);
+  assert.equal(n.selected, 0);
+});
+
+test("style: scrolling starts when the fourth card is reached", () => {
+  let n = styleNav();
+  for (let i = 0; i < 3 * 2 + 2; i++) n.move(1);
+  assert.deepEqual([n.cardAndPart(), n.offset], [[2, 2], 1]);
+  n = styleNav();
+  for (let i = 0; i < 3 * 1 + 2; i++) n.move(1);
+  assert.deepEqual([n.cardAndPart(), n.offset], [[1, 2], 0]);
+});
+
+test("style: every part stays visible", () => {
+  for (let count = 0; count < 10; count++) {
+    const n = styleNav(count);
+    const steps = [...Array(3 * count + 3).fill(1), ...Array(3 * count + 4).fill(-1)];
+    for (const step of steps) {
+      n.move(step);
+      const slot = n.cardAndPart()[0] + 1;
+      assert.ok(n.offset <= slot && slot < n.offset + 5);
+    }
+  }
+});
+
+test("colour cycle has eight colours, steps through all of them and wraps", () => {
+  assert.equal(COLOR_CYCLE.length, 8);
+  assert.equal(new Set(COLOR_CYCLE).size, 8);
+  let c = COLOR_CYCLE[0];
+  const seen = [c];
+  for (let i = 0; i < 8; i++) { c = nextColor(c); seen.push(c); }
+  assert.deepEqual(seen.slice(0, 8), COLOR_CYCLE);
+  assert.equal(seen[8], COLOR_CYCLE[0]);
+  assert.equal(nextColor("#123456"), COLOR_CYCLE[0]);
+  assert.equal(nextColor(COLOR_CYCLE[1].toUpperCase()), COLOR_CYCLE[2]);
+});
+
+test("store: rename and colour persist", () => {
+  const storage = memory();
+  const s = new Store(storage, () => 1_700_000_000);
+  const [a] = s.projects();
+  s.renameProject(a.id, "  Deep work ");
+  s.setProjectColor(a.id, "#cc4a93");
+  const again = new Store(storage, () => 1_700_000_000);
+  assert.equal(again.projects()[0].name, "Deep work");
+  assert.equal(again.projects()[0].color, "#cc4a93");
+  s.renameProject(a.id, "   ");                      // an empty name is ignored
+  assert.equal(s.projects()[0].name, "Deep work");
+});
+
+const DAY = 86_400;
+
+function resetSetup(startOffset = 3600) {
+  const t0 = new Date(2026, 5, 10, 0, 0, 0).getTime() / 1000;   // local midnight
+  const state = { t: t0 + startOffset };
+  const s = new Store(memory(), () => state.t);
+  const [a, b] = s.projects();
+  const [dayStart, dayEnd] = dayBounds(state.t);
+  return { s, a, b, state, dayStart, dayEnd };
+}
+
+test("resetToday removes today's entries for that project only", () => {
+  const { s, a, b, state, dayStart, dayEnd } = resetSetup();
+  s.start(a.id); state.t += 600;
+  s.start(b.id); state.t += 300;
+  s.stop();
+  s.resetToday(a.id);
+  assert.deepEqual(s.totals(dayStart, dayEnd), { [b.id]: 300 });
+});
+
+test("resetToday keeps other days", () => {
+  const { s, a, state, dayStart, dayEnd } = resetSetup(100);
+  state.t = dayStart - 7200;
+  s.start(a.id); state.t += 1000; s.stop();
+  state.t = dayStart + 100;
+  s.start(a.id); state.t += 500; s.stop();
+  s.resetToday(a.id);
+  assert.deepEqual(s.totals(dayStart, dayEnd), {});
+  assert.deepEqual(s.totals(dayStart - DAY, dayStart), { [a.id]: 1000 });
+});
+
+test("resetToday cuts an entry that runs in from yesterday at midnight", () => {
+  const { s, a, state, dayStart, dayEnd } = resetSetup();
+  state.t = dayStart - 600;
+  s.start(a.id); state.t += 1200; s.stop();
+  assert.deepEqual(s.totals(dayStart, dayEnd), { [a.id]: 600 });
+  s.resetToday(a.id);
+  assert.deepEqual(s.totals(dayStart, dayEnd), {});
+  assert.deepEqual(s.totals(dayStart - DAY, dayStart), { [a.id]: 600 });
+});
+
+test("resetToday restarts a running timer from now", () => {
+  const { s, a, state, dayStart, dayEnd } = resetSetup(1000);
+  s.start(a.id); state.t += 500;
+  s.resetToday(a.id);
+  assert.equal(s.running().start, state.t);
+  assert.equal(s.totals(dayStart, dayEnd)[a.id] ?? 0, 0);
+});
+
+test("resetToday on a timer started yesterday keeps yesterday's part", () => {
+  const { s, a, state, dayStart, dayEnd } = resetSetup();
+  state.t = dayStart - 900;
+  s.start(a.id);
+  state.t = dayStart + 600;
+  s.resetToday(a.id);
+  assert.deepEqual(s.totals(dayStart - DAY, dayStart), { [a.id]: 900 });
+  assert.equal(s.running().start, state.t);
+  assert.equal(s.totals(dayStart, dayEnd)[a.id] ?? 0, 0);
+});

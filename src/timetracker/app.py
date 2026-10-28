@@ -8,21 +8,23 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
-from .colors import PALETTE
+from .colors import COLOR_CYCLE
 from .config import load_config
 from .controller import Controller
 from .db import Database
 from .inputs import make_input
 
-STARTER_PROJECTS = ["Work", "Admin", "Learning", "Meetings", "Personal", "Other"]
+STARTER_PROJECTS = [  # (name, index into COLOR_CYCLE)
+    ("Work", 5), ("Admin", 6), ("Learning", 4), ("Meetings", 0), ("Personal", 2), ("Other", 3),
+]
 
 
 def seed_starter_projects(db: Database) -> None:
     """On the very first start, create a few projects so the screen is not empty."""
     if db.get_meta("seeded"):
         return
-    for i, name in enumerate(STARTER_PROJECTS):
-        db.add_project(name, PALETTE[(i * 2 + 6) % len(PALETTE)][1])
+    for name, color in STARTER_PROJECTS:
+        db.add_project(name, COLOR_CYCLE[color])
     db.set_meta("seeded", "1")
 
 

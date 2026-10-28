@@ -5,16 +5,24 @@ from typing import Callable
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
+from .colors import next_color
 from .db import Database, Entry
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, SETTINGS, STYLE, StripNav
 from .timeutil import day_bounds
 
-
-NOTE_DELETE = 0  # note prompt buttons, left to right; the knob button presses the focused one
+# Text prompt buttons, left to right; the knob button presses the focused one.
+# The note prompt has all three, the rename prompt only Cancel (= NOTE_SKIP) and Save.
+NOTE_DELETE = 0
 NOTE_SKIP = 1
 NOTE_SAVE = 2
 NOTE_MAX_LENGTH = 200
+
+# Style screen: every card has three parts, in the order the knob visits them.
+STYLE_PARTS = 3
+PART_COLOR = 0
+PART_NAME = 1
+PART_TIME = 2
 
 
 class Controller(QObject):
@@ -23,18 +31,22 @@ class Controller(QObject):
     screenChanged = Signal()
     projectCountChanged = Signal()
     noteChanged = Signal()
+    resetArmedChanged = Signal()
 
     def __init__(self, db: Database, clock: Callable[[], float] = time.time, parent=None):
         super().__init__(parent)
         self._db = db
         self._clock = clock
         self._nav = StripNav()
-        self._screen = "main"
+        self._screen = "main"  # "main", "style" or "settings"
         self._last_second = -1
         self._note_entry: Entry | None = None  # finished entry waiting for its note
+        self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
+        self._rename_row = -1
         self._note_text = ""
         self._note_focus = NOTE_SKIP
         self._delete_armed = False  # Delete was pressed once and waits for confirmation
+        self._reset_armed_index: int | None = None  # Style item whose time reset awaits confirmation
         self.projects = ProjectModel(self)
         self.reload_projects()
 
@@ -48,6 +60,20 @@ class Controller(QObject):
     @Property(int, notify=selectedChanged)
     def selected(self):
         return self._nav.selected
+
+    @Property(int, notify=selectedChanged)
+    def selectedCard(self):
+        """Card of the selection, -1 while a column item (Settings, Style, Back) is selected."""
+        return self._nav.card_and_part()[0]
+
+    @Property(int, notify=selectedChanged)
+    def selectedPart(self):
+        """Style screen: 0 colour, 1 name, 2 time. -1 on the main screen or in the column."""
+        return self._nav.card_and_part()[1] if self._screen == "style" else -1
+
+    @Property(bool, notify=resetArmedChanged)
+    def resetArmed(self):
+        return self._reset_armed_index is not None and self._reset_armed_index == self._nav.selected
 
     @Property(int, notify=viewOffsetChanged)
     def viewOffset(self):
@@ -63,7 +89,11 @@ class Controller(QObject):
 
     @Property(bool, notify=noteChanged)
     def notePromptOpen(self):
-        return self._note_entry is not None
+        return self._prompt_open()
+
+    @Property(str, notify=noteChanged)
+    def noteKind(self):
+        return "rename" if self._rename_id is not None else "note"
 
     @Property(str, notify=noteChanged)
     def noteText(self):
@@ -79,9 +109,10 @@ class Controller(QObject):
 
     @Property(str, notify=noteChanged)
     def noteProject(self):
-        if self._note_entry is None:
-            return ""
-        project = self._db.get_project(self._note_entry.project_id)
+        project_id = self._rename_id if self._rename_id is not None else (
+            self._note_entry.project_id if self._note_entry is not None else None
+        )
+        project = self._db.get_project(project_id) if project_id is not None else None
         return project.name if project else ""
 
     @Property(int, notify=noteChanged)
@@ -119,21 +150,34 @@ class Controller(QObject):
     def _emit_nav_changes(self, before: tuple[int, int]) -> None:
         if self._nav.selected != before[0]:
             self.selectedChanged.emit()
+            self._disarm_reset()  # moving the selection cancels a pending time reset
         if self._nav.offset != before[1]:
             self.viewOffsetChanged.emit()
+
+    def _use_nav(self, nav: StripNav) -> None:
+        self._nav = nav
+        self.selectedChanged.emit()
+        self.viewOffsetChanged.emit()
+        self._disarm_reset()
+
+    def _set_screen(self, screen: str) -> None:
+        if screen != self._screen:
+            self._screen = screen
+            self.screenChanged.emit()
 
     @Slot(int)
     def turn(self, steps: int) -> None:
         """Knob turned: positive = clockwise = selection moves right."""
-        if self._note_entry is not None:
-            # In the note prompt the knob moves the focus between Delete, Skip and Save.
-            focus = max(NOTE_DELETE, min(NOTE_SAVE, self._note_focus + steps))
+        if self._prompt_open():
+            # In a text prompt the knob moves the focus between its buttons.
+            lowest = NOTE_SKIP if self._rename_id is not None else NOTE_DELETE
+            focus = max(lowest, min(NOTE_SAVE, self._note_focus + steps))
             if focus != self._note_focus:
                 self._note_focus = focus
                 self._delete_armed = False  # moving away cancels a pending delete
                 self.noteChanged.emit()
             return
-        if self._screen != "main":
+        if self._screen == "settings":
             return
         before = (self._nav.selected, self._nav.offset)
         self._nav.move(steps)
@@ -142,17 +186,17 @@ class Controller(QObject):
     @Slot()
     def press(self) -> None:
         """Knob button pressed."""
-        if self._note_entry is not None:
+        if self._prompt_open():
             {NOTE_DELETE: self.noteDelete, NOTE_SKIP: self.noteSkip, NOTE_SAVE: self.noteSave}[self._note_focus]()
-        elif self._screen != "main":
+        elif self._screen == "settings":
             self.back()
         else:
             self._activate(self._nav.selected)
 
     @Slot(int)
     def tap(self, index: int) -> None:
-        """Touchscreen tap on an item (same linear index as the knob uses)."""
-        if self._screen != "main" or self._note_entry is not None:
+        """Touchscreen tap on an item (same item index as the knob uses)."""
+        if self._screen == "settings" or self._prompt_open():
             return
         before = (self._nav.selected, self._nav.offset)
         self._nav.select(index)
@@ -162,24 +206,21 @@ class Controller(QObject):
     @Slot()
     def back(self) -> None:
         """Return to the main screen in its default view."""
-        before = (self._nav.selected, self._nav.offset)
-        self._nav.reset()
-        self._emit_nav_changes(before)
-        if self._screen != "main":
-            self._screen = "main"
-            self.screenChanged.emit()
-
-    def _open(self, screen: str) -> None:
-        self._screen = screen
-        self.screenChanged.emit()
+        self._use_nav(StripNav(self._nav.project_count))
+        self._set_screen("main")
 
     def _activate(self, index: int) -> None:
-        if index == SETTINGS:
-            self._open("settings")
+        if self._screen == "style":
+            self._activate_style(index)
+        elif index == SETTINGS:
+            self._set_screen("settings")
         elif index == STYLE:
-            self._open("style")
+            self._use_nav(StripNav(self._nav.project_count, column_items=1, parts=STYLE_PARTS))
+            self._set_screen("style")
         elif index >= FIRST_PROJECT:
             self._toggle(self.projects.project_id(index - FIRST_PROJECT))
+
+    # -- main screen: start / stop ----------------------------------------------------
 
     def _toggle(self, project_id: int) -> None:
         running = self._db.running()
@@ -192,7 +233,47 @@ class Controller(QObject):
         if finished is not None:
             self._open_note(finished)
 
-    # -- note prompt ---------------------------------------------------------------
+    # -- style screen ----------------------------------------------------------------
+
+    def _activate_style(self, index: int) -> None:
+        if index == 0:  # the Back button in the column
+            self.back()
+            return
+        card, part = divmod(index - 1, STYLE_PARTS)
+        if part == PART_COLOR:
+            self._cycle_color(card)
+        elif part == PART_NAME:
+            self._open_rename(card)
+        else:
+            self._reset_time(card, index)
+
+    def _cycle_color(self, card: int) -> None:
+        project_id = self.projects.project_id(card)
+        project = self._db.get_project(project_id)
+        color = next_color(project.color)
+        self._db.set_project_color(project_id, color)
+        self.projects.set_color(card, color)
+
+    def _reset_time(self, card: int, index: int) -> None:
+        """Zero today's total of a project. The first press only arms it, the second does it."""
+        if self._reset_armed_index != index:
+            self._reset_armed_index = index
+            self.resetArmedChanged.emit()
+            return
+        self._disarm_reset()
+        start, end = day_bounds(self._clock())
+        self._db.reset_day(self.projects.project_id(card), start, end)
+        self._refresh_times()
+
+    def _disarm_reset(self) -> None:
+        if self._reset_armed_index is not None:
+            self._reset_armed_index = None
+            self.resetArmedChanged.emit()
+
+    # -- text prompt: note after a stop, or renaming a project ------------------------------
+
+    def _prompt_open(self) -> bool:
+        return self._note_entry is not None or self._rename_id is not None
 
     def _open_note(self, entry: Entry) -> None:
         self._note_entry = entry
@@ -201,8 +282,18 @@ class Controller(QObject):
         self._delete_armed = False
         self.noteChanged.emit()
 
+    def _open_rename(self, card: int) -> None:
+        project = self._db.get_project(self.projects.project_id(card))
+        self._rename_id = project.id
+        self._rename_row = card
+        self._note_text = project.name
+        self._note_focus = NOTE_SKIP  # Cancel: one button press changes nothing
+        self._delete_armed = False
+        self.noteChanged.emit()
+
     def _close_note(self) -> None:
         self._note_entry = None
+        self._rename_id = None
         self._note_text = ""
         self._note_focus = NOTE_SKIP
         self._delete_armed = False
@@ -210,28 +301,35 @@ class Controller(QObject):
 
     @Slot(str)
     def noteType(self, text: str) -> None:
-        if self._note_entry is not None:
+        if self._prompt_open():
             self._note_text = (self._note_text + text)[:NOTE_MAX_LENGTH]
             self._delete_armed = False
             self.noteChanged.emit()
 
     @Slot()
     def noteBackspace(self) -> None:
-        if self._note_entry is not None and self._note_text:
+        if self._prompt_open() and self._note_text:
             self._note_text = self._note_text[:-1]
             self._delete_armed = False
             self.noteChanged.emit()
 
     @Slot()
     def noteSave(self) -> None:
-        if self._note_entry is not None:
+        if self._rename_id is not None:
+            name = self._note_text.strip()
+            if name:
+                self._db.rename_project(self._rename_id, name)
+                self.projects.set_name(self._rename_row, name)
+            self._close_note()
+        elif self._note_entry is not None:
             if self._note_text.strip():
                 self._db.set_note(self._note_entry.id, self._note_text)
             self._close_note()
 
     @Slot()
     def noteSkip(self) -> None:
-        if self._note_entry is not None:
+        """Skip the note, or cancel the rename."""
+        if self._prompt_open():
             self._close_note()
 
     @Slot()

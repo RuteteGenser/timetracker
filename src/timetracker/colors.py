@@ -14,3 +14,15 @@ PALETTE = [
     ("Brown", "#85665a"),
     ("Slate", "#586c7e"),
 ]
+
+# The Style screen steps through these on every press (dark enough for white text).
+COLOR_CYCLE = ["#c8424e", "#d9722f", "#b8861b", "#2f9a58", "#1a948f", "#3274d1", "#9250b4", "#cc4a93"]
+
+
+def next_color(current: str) -> str:
+    """The colour after `current` in COLOR_CYCLE; an unknown colour starts the cycle."""
+    try:
+        i = COLOR_CYCLE.index(current.lower())
+    except ValueError:
+        return COLOR_CYCLE[0]
+    return COLOR_CYCLE[(i + 1) % len(COLOR_CYCLE)]

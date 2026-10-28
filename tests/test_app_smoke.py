@@ -194,3 +194,134 @@ def test_delete_from_switch_prompt_keeps_the_new_timer(ui, clock):
     running = db.running()
     assert running is not None and running.project_id == ctl.projects.project_id(1)
     assert len(db.entries_between(0, 2**40)) == 1
+
+
+# -- Style screen ----------------------------------------------------------------------------
+
+def enter_style(window):
+    key(window, Qt.Key.Key_Left)       # Style
+    key(window, Qt.Key.Key_Space)
+
+
+def color_of(ctl, row):
+    return ctl.projects.data(ctl.projects.index(row), ctl.projects.ColorRole)
+
+
+def test_style_opens_on_first_cards_color_part(ui):
+    ctl, window, _ = ui
+    enter_style(window)
+    assert ctl.screen == "style"
+    assert (ctl.selectedCard, ctl.selectedPart) == (0, 0)
+
+
+def test_style_knob_visits_the_three_parts_of_each_card(ui):
+    ctl, window, _ = ui
+    enter_style(window)
+    seen = []
+    for _ in range(5):
+        seen.append((ctl.selectedCard, ctl.selectedPart))
+        key(window, Qt.Key.Key_Right)
+    assert seen == [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+
+
+def test_style_color_part_cycles_through_eight_colors(ui):
+    from timetracker.colors import COLOR_CYCLE, next_color
+    ctl, window, db = ui
+    enter_style(window)
+    start = color_of(ctl, 0)
+    seen = [start]
+    for _ in range(8):
+        key(window, Qt.Key.Key_Space)
+        seen.append(color_of(ctl, 0))
+    assert seen[1] == next_color(start)
+    assert seen[8] == start                      # all eight in the cycle, then back to the start
+    assert db.list_projects()[0].color == seen[-1]
+    assert set(seen) <= set(COLOR_CYCLE)
+
+
+def test_style_rename_saves_and_cancel_does_not(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    key(window, Qt.Key.Key_Right)                # name part
+    key(window, Qt.Key.Key_Space)
+    assert ctl.notePromptOpen and ctl.noteKind == "rename"
+    assert ctl.noteText == "Work" and ctl.noteFocus == 1      # Cancel is outlined
+    ctl.noteType("!")
+    key(window, Qt.Key.Key_Space)                # Cancel
+    assert not ctl.notePromptOpen and db.list_projects()[0].name == "Work"
+    key(window, Qt.Key.Key_Space)                # open again
+    ctl.noteBackspace(); ctl.noteBackspace(); ctl.noteBackspace(); ctl.noteBackspace()
+    ctl.noteType("Deep work")
+    key(window, Qt.Key.Key_Right)                # Save
+    assert ctl.noteFocus == 2
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Left)                 # clamps at Cancel: there is no Delete here
+    assert ctl.noteFocus == 1
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)
+    assert db.list_projects()[0].name == "Deep work"
+    assert ctl.projects.data(ctl.projects.index(0), ctl.projects.NameRole) == "Deep work"
+
+
+def test_style_empty_name_is_not_saved(ui):
+    ctl, window, db = ui
+    enter_style(window)
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)
+    for _ in range(4):
+        ctl.noteBackspace()
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)
+    assert db.list_projects()[0].name == "Work"
+
+
+def test_style_time_reset_needs_two_presses(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)                # start Work
+    clock.advance(120)
+    key(window, Qt.Key.Key_Space)                # stop
+    key(window, Qt.Key.Key_Space)                # skip note
+    today = lambda: ctl.projects.data(ctl.projects.index(0), ctl.projects.TodayRole)
+    assert today() == 120
+    enter_style(window)
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Right)                # time part
+    key(window, Qt.Key.Key_Space)                # first press: arms
+    assert ctl.resetArmed and today() == 120
+    key(window, Qt.Key.Key_Space)                # second press: resets
+    assert not ctl.resetArmed and today() == 0
+    assert db.entries_between(0, 2**40) == []
+
+
+def test_style_moving_away_cancels_a_pending_reset(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space); clock.advance(60); key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)
+    enter_style(window)
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)
+    assert ctl.resetArmed
+    key(window, Qt.Key.Key_Right)                # next card
+    assert not ctl.resetArmed
+    key(window, Qt.Key.Key_Left)                 # back on the time part: must be armed again first
+    key(window, Qt.Key.Key_Space)
+    assert ctl.resetArmed and len(db.entries_between(0, 2**40)) == 1
+
+
+def test_style_back_button_returns_to_the_default_main_view(ui):
+    ctl, window, _ = ui
+    enter_style(window)
+    key(window, Qt.Key.Key_Left)                 # first part -> Back
+    assert ctl.selected == 0 and ctl.selectedCard == -1
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "main" and ctl.selected == 2 and ctl.viewOffset == 0
+
+
+def test_style_tapping_parts(ui):
+    ctl, _, db = ui
+    ctl.tap(1)                                   # Style column item
+    assert ctl.screen == "style"
+    before = color_of(ctl, 1)
+    ctl.tap(1 + 3 * 1 + 0)                       # card 2, colour part
+    assert color_of(ctl, 1) != before and ctl.selectedCard == 1 and ctl.selectedPart == 0
+    ctl.tap(1 + 3 * 1 + 1)                       # card 2, name part
+    assert ctl.noteKind == "rename" and ctl.noteText == "Admin"

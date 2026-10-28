@@ -21,7 +21,7 @@ Rectangle {
         return Math.floor(s / 3600) + "h " + (m % 60 < 10 ? "0" : "") + (m % 60) + "m"
     }
 
-    onVisibleChanged: if (visible) shift = true
+    onVisibleChanged: if (visible) shift = ctl.noteText.length === 0  // capital first letter of a new note
 
     // Swallow taps so nothing underneath reacts.
     MouseArea { anchors.fill: parent }
@@ -32,7 +32,10 @@ Rectangle {
 
         Row {
             spacing: 16 * root.u
-            Text { text: "What did you do?"; color: "#ffffff"; font.pixelSize: 38 * root.u; font.bold: true }
+            Text {
+                text: ctl.noteKind === "rename" ? "Rename" : "What did you do?"
+                color: "#ffffff"; font.pixelSize: 38 * root.u; font.bold: true
+            }
             Text {
                 anchors.baseline: parent.children[0].baseline
                 text: ctl.noteProject + "  ·  " + root.span(ctl.noteSeconds)
@@ -91,19 +94,21 @@ Rectangle {
                 onClicked: root.shift = !root.shift
             }
             KeyButton {
-                u: root.u; width: root.width - 40 * root.u - 4 * root.gap - 130 * root.u - 3 * 170 * root.u
+                property int buttons: ctl.noteKind === "rename" ? 2 : 3   // Delete only exists for notes
+                u: root.u; width: root.width - 40 * root.u - (buttons + 1) * root.gap - 130 * root.u - buttons * 170 * root.u
                 height: 76 * root.u; label: "space"
                 onClicked: ctl.noteType(" ")
             }
             KeyButton {
                 u: root.u; width: 170 * root.u; height: 76 * root.u
+                visible: ctl.noteKind === "note"
                 label: ctl.noteDeleteArmed ? "Confirm" : "Delete"; danger: true
                 armed: ctl.noteDeleteArmed; focused: ctl.noteFocus === 0
                 onClicked: ctl.noteDelete()
             }
             KeyButton {
                 u: root.u; width: 170 * root.u; height: 76 * root.u
-                label: "Skip"; focused: ctl.noteFocus === 1
+                label: ctl.noteKind === "rename" ? "Cancel" : "Skip"; focused: ctl.noteFocus === 1
                 onClicked: ctl.noteSkip()
             }
             KeyButton {

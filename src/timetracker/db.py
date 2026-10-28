@@ -180,6 +180,35 @@ class Database:
         with self._tx():
             return self._stop_locked(self.now())
 
+    def reset_day(self, project_id: int, day_start: int, day_end: int) -> None:
+        """Zero a project's total for one day.
+
+        Entries inside the day are deleted, ones that run in from the day before are cut at
+        midnight, and a running timer restarts from now (its earlier part of the day goes).
+        """
+        now = self.now()
+        with self._tx():
+            self._conn.execute(
+                "DELETE FROM entries WHERE project_id = ? AND end_ts IS NOT NULL "
+                "AND start_ts >= ? AND end_ts <= ?",
+                (project_id, day_start, day_end),
+            )
+            self._conn.execute(
+                "UPDATE entries SET end_ts = ? WHERE project_id = ? AND end_ts IS NOT NULL "
+                "AND start_ts < ? AND end_ts > ? AND end_ts <= ?",
+                (day_start, project_id, day_start, day_start, day_end),
+            )
+            run = self._conn.execute(
+                "SELECT * FROM entries WHERE project_id = ? AND end_ts IS NULL", (project_id,)
+            ).fetchone()
+            if run is not None and run["start_ts"] >= day_start:
+                self._conn.execute("UPDATE entries SET start_ts = ? WHERE id = ?", (now, run["id"]))
+            elif run is not None:  # started before today: keep yesterday's part, restart now
+                self._conn.execute("UPDATE entries SET end_ts = ? WHERE id = ?", (day_start, run["id"]))
+                self._conn.execute(
+                    "INSERT INTO entries(project_id, start_ts) VALUES (?, ?)", (project_id, now)
+                )
+
     # -- entries ----------------------------------------------------------
 
     def get_entry(self, entry_id: int) -> Entry | None:

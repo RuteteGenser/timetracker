@@ -1,35 +1,55 @@
 // Browser version of the time tracker: same behaviour as the Pi app, with the
 // knob and button simulated by the keyboard (or mouse wheel) and data kept in
 // this browser's localStorage. Nothing ever leaves the browser.
+// The rules mirror src/timetracker/controller.py.
 
 import { StripNav, SETTINGS, STYLE, FIRST_PROJECT } from "./nav.js";
-import { Store, dayBounds } from "./store.js";
+import { Store, dayBounds, nextColor } from "./store.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
+const STYLE_PARTS = 3; // colour, name, time: the order the knob visits them
+const PART_COLOR = 0;
+const PART_NAME = 1;
+const PART_TIME = 2;
 
 const store = new Store();
-const nav = new StripNav(store.projects().length);
-let screen = "main";
+const projectCount = store.projects().length;
+let nav = new StripNav(projectCount);
+let screen = "main"; // "main", "style" or "settings"
+let resetArmed = null; // Style item whose time reset waits for its confirming second press
 
 const stage = document.getElementById("stage");
 const strip = document.getElementById("strip");
 const overlay = document.getElementById("overlay");
 const btnSettings = document.getElementById("btn-settings");
 const btnStyle = document.getElementById("btn-style");
+const btnBack = document.getElementById("btn-back");
 
 // -- build tiles --------------------------------------------------------------
 
-const tiles = []; // { project, el, timer, today }
+// Each tile holds both looks: the main one and `.parts` (colour, name, time) for the Style screen.
+const tiles = []; // { project, el, timer, today, parts: [colour, name, time], pname, pval }
 for (const p of store.projects()) {
   const el = document.createElement("div");
   el.className = "tile";
-  el.style.setProperty("--c", p.color);
-  el.innerHTML = '<div class="band"></div><div class="name"></div><div class="badge">\u25cf RUNNING</div><div class="timer"></div><div class="today"></div>';
-  el.querySelector(".name").textContent = p.name;
-  const index = FIRST_PROJECT + tiles.length;
-  el.addEventListener("click", () => tap(index));
+  el.innerHTML =
+    '<div class="band"></div><div class="name"></div><div class="badge">● RUNNING</div>' +
+    '<div class="timer"></div><div class="today"></div>' +
+    '<div class="parts">' +
+    '<div class="part p-color"><span>Color</span></div>' +
+    '<div class="part p-name"><b class="pname"></b><span>Rename</span></div>' +
+    '<div class="part p-time"><span class="cap">Today</span><b class="pval"></b><span class="hint"></span></div>' +
+    "</div>";
+  const index = tiles.length;
+  el.addEventListener("click", () => { if (screen === "main") tap(FIRST_PROJECT + index); });
+  const parts = [...el.querySelectorAll(".part")];
+  parts.forEach((part, i) => part.addEventListener("click", () => { if (screen === "style") tap(1 + STYLE_PARTS * index + i); }));
   strip.appendChild(el);
-  tiles.push({ project: p, el, timer: el.querySelector(".timer"), today: el.querySelector(".today") });
+  tiles.push({
+    project: p, el, parts,
+    timer: el.querySelector(".timer"), today: el.querySelector(".today"),
+    pname: el.querySelector(".pname"), pval: el.querySelector(".pval"), hint: el.querySelector(".hint"),
+  });
 }
 strip.style.width = `${(tiles.length + 1) * SLOT_W}px`;
 
@@ -43,6 +63,14 @@ const span = (s) => s < 3600
   : `${Math.floor(s / 3600)}h ${pad(Math.floor(s / 60) % 60)}m`;
 const spanShort = (s) => (s < 60 ? `${s}s` : span(s));
 
+function renderTiles() { // names and colours
+  for (const t of tiles) {
+    t.el.style.setProperty("--c", t.project.color);
+    t.el.querySelector(".name").textContent = t.project.name;
+    t.pname.textContent = t.project.name;
+  }
+}
+
 function renderTimes() {
   const now = store.now();
   const [start, end] = dayBounds(now);
@@ -50,88 +78,140 @@ function renderTimes() {
   const run = store.running();
   for (const t of tiles) {
     const running = run?.projectId === t.project.id;
+    const today = totals[t.project.id] ?? 0;
     t.el.classList.toggle("running", running);
     t.timer.textContent = running ? clock(Math.max(0, now - run.start)) : "";
-    t.today.textContent = `Today  ${span(totals[t.project.id] ?? 0)}`;
+    t.today.textContent = `Today  ${span(today)}`;
+    t.pval.textContent = span(today);
   }
 }
 
 function renderNav() {
-  btnSettings.classList.toggle("selected", nav.selected === SETTINGS);
-  btnStyle.classList.toggle("selected", nav.selected === STYLE);
-  tiles.forEach((t, i) => t.el.classList.toggle("selected", nav.selected === FIRST_PROJECT + i));
+  const [card, part] = nav.cardAndPart();
+  stage.classList.toggle("style-mode", screen === "style");
+  btnSettings.classList.toggle("selected", screen === "main" && nav.selected === SETTINGS);
+  btnStyle.classList.toggle("selected", screen === "main" && nav.selected === STYLE);
+  btnBack.classList.toggle("selected", screen === "style" && nav.selected === 0);
+  tiles.forEach((t, i) => {
+    t.el.classList.toggle("selected", screen === "main" && card === i);
+    t.parts.forEach((el, p) => el.classList.toggle("selected", screen === "style" && card === i && part === p));
+    const armed = screen === "style" && resetArmed === 1 + STYLE_PARTS * i + PART_TIME && nav.selected === resetArmed;
+    t.parts[PART_TIME].classList.toggle("armed", armed);
+    t.hint.textContent = armed ? "Confirm reset" : "Reset time";
+  });
   strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
-  overlay.classList.toggle("on", screen !== "main");
-  document.getElementById("overlay-title").textContent = screen === "style" ? "Style" : "Settings";
+  overlay.classList.toggle("on", screen === "settings");
 }
 
-// -- actions (same rules as src/timetracker/controller.py) ----------------------
+// -- actions ------------------------------------------------------------------
+
+function useNav(newNav) {
+  nav = newNav;
+  resetArmed = null;
+}
 
 function turn(steps) {
-  if (note) {                       // in the note prompt the knob moves between Delete, Skip and Save
-    const focus = Math.max(NOTE_DELETE, Math.min(NOTE_SAVE, note.focus + steps));
+  if (note) {                       // in a text prompt the knob moves between its buttons
+    const lowest = note.kind === "rename" ? NOTE_SKIP : NOTE_DELETE;
+    const focus = Math.max(lowest, Math.min(NOTE_SAVE, note.focus + steps));
     if (focus !== note.focus) note.armed = false; // moving away cancels a pending delete
     note.focus = focus;
     renderNote();
     return;
   }
-  if (screen !== "main") return;
+  if (screen === "settings") return;
+  const before = nav.selected;
   nav.move(steps);
+  if (nav.selected !== before) resetArmed = null; // moving away cancels a pending time reset
   renderNav();
 }
 
+function toggleProject(p) {
+  const run = store.running();
+  let finished = null;
+  if (run?.projectId === p.id) {
+    finished = store.stop();
+  } else {
+    store.start(p.id);              // also ends the previously running entry
+    finished = run;
+  }
+  if (finished) openNote(finished, tiles.find((t) => t.project.id === finished.projectId).project);
+}
+
+function activateStyle(index) {
+  if (index === 0) { back(); return; } // the Back button in the column
+  const card = Math.floor((index - 1) / STYLE_PARTS);
+  const part = (index - 1) % STYLE_PARTS;
+  const project = tiles[card].project;
+  if (part === PART_COLOR) {
+    project.color = nextColor(project.color);
+    store.setProjectColor(project.id, project.color);
+    renderTiles();
+  } else if (part === PART_NAME) {
+    openRename(project);
+  } else if (resetArmed !== index) {  // time: the first press only arms it
+    resetArmed = index;
+  } else {                            // the second press resets today's total
+    resetArmed = null;
+    store.resetToday(project.id);
+  }
+}
+
 function activate(index) {
-  if (index === SETTINGS) screen = "settings";
-  else if (index === STYLE) screen = "style";
-  else {
+  if (screen === "style") activateStyle(index);
+  else if (index === SETTINGS) screen = "settings";
+  else if (index === STYLE) {
+    useNav(new StripNav(nav.projectCount, 1, STYLE_PARTS));
+    screen = "style";
+  } else {
     const p = tiles[index - FIRST_PROJECT]?.project;
-    if (p) {
-      const run = store.running();
-      let finished = null;
-      if (run?.projectId === p.id) {
-        finished = store.stop();
-      } else {
-        store.start(p.id);          // also ends the previously running entry
-        finished = run;
-      }
-      if (finished) openNote(finished, tiles.find((t) => t.project.id === finished.projectId).project);
-    }
+    if (p) toggleProject(p);
   }
   renderTimes();
   renderNav();
 }
 
 function back() {
+  useNav(new StripNav(nav.projectCount));
   screen = "main";
-  nav.reset();
   renderNav();
 }
 
 function press() {
   if (note) [noteDelete, noteSkip, noteSave][note.focus]();
-  else if (screen !== "main") back();
+  else if (screen === "settings") back();
   else activate(nav.selected);
 }
 
 function tap(index) {
-  if (screen !== "main" || note) return;
+  if (screen === "settings" || note) return;
+  const before = nav.selected;
   nav.select(index);
+  if (nav.selected !== before) resetArmed = null;
   activate(index);
 }
 
-// -- note prompt ----------------------------------------------------------------
+// -- text prompt: note after a stop, or renaming a project ---------------------------
 
-const NOTE_DELETE = 0; // note prompt buttons, left to right
+const NOTE_DELETE = 0; // prompt buttons, left to right; rename only has Cancel (= NOTE_SKIP) and Save
 const NOTE_SKIP = 1;
 const NOTE_SAVE = 2;
-let note = null; // { entryId, name, seconds, text, focus (a NOTE_ constant), shift, armed }
+let note = null; // { kind: "note" | "rename", entryId, project, text, focus, shift, armed }
 const noteEl = document.getElementById("note");
 const noteText = document.getElementById("note-text");
 const KEY_ROWS = ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"];
 
 function openNote(entry, project) {
-  note = { entryId: entry.id, name: project.name, seconds: entry.end - entry.start, text: "", focus: NOTE_SKIP, shift: true, armed: false };
-  document.getElementById("note-sub").textContent = `${project.name}  \u00b7  ${spanShort(note.seconds)}`;
+  note = { kind: "note", entryId: entry.id, project, text: "", focus: NOTE_SKIP, shift: true, armed: false };
+  document.getElementById("note-title").textContent = "What did you do?";
+  document.getElementById("note-sub").textContent = `${project.name}  ·  ${spanShort(entry.end - entry.start)}`;
+  renderNote();
+}
+
+function openRename(project) {
+  note = { kind: "rename", project, text: project.name, focus: NOTE_SKIP, shift: false, armed: false };
+  document.getElementById("note-title").textContent = "Rename";
+  document.getElementById("note-sub").textContent = project.name;
   renderNote();
 }
 
@@ -141,17 +221,27 @@ function noteClose() {
 }
 
 function noteSave() {
-  if (note.text.trim()) store.setNote(note.entryId, note.text);
+  if (note.kind === "rename") {
+    const name = note.text.trim();
+    if (name) {
+      store.renameProject(note.project.id, name);
+      note.project.name = name;
+      renderTiles();
+    }
+  } else if (note.text.trim()) {
+    store.setNote(note.entryId, note.text);
+  }
   noteClose();
 }
 
-function noteSkip() {
+function noteSkip() { // skips the note, or cancels the rename
   noteClose();
 }
 
 // Throw away the timer that was just stopped (its time no longer counts).
 // The first press only arms the button (orange, "Confirm"); the second deletes.
 function noteDelete() {
+  if (note.kind !== "note") return;
   if (!note.armed) {
     note.armed = true;
     renderNote();
@@ -177,9 +267,11 @@ function noteBackspace() {
 
 function renderNote() {
   noteEl.classList.toggle("on", note !== null);
+  renderNav();
+  renderTimes();
   if (!note) return;
   noteText.classList.toggle("empty", note.text === "");
-  noteText.textContent = note.text === "" ? "Optional note\u2026" : note.text + "\u258f";
+  noteText.textContent = note.text === "" ? (note.kind === "rename" ? "Name…" : "Optional note…") : note.text + "▏";
   const keys = document.getElementById("note-keys");
   keys.replaceChildren();
   const key = (label, cls, onClick) => {
@@ -196,7 +288,7 @@ function renderNote() {
       const ch = note.shift ? c.toUpperCase() : c;
       row.appendChild(key(ch, "", () => noteType(ch)));
     }
-    if (r === 0) row.appendChild(key("\u232b", "", noteBackspace));
+    if (r === 0) row.appendChild(key("⌫", "", noteBackspace));
     else row.appendChild(key("", "", () => {})).style.visibility = "hidden";
     keys.appendChild(row);
   });
@@ -204,8 +296,10 @@ function renderNote() {
   last.className = "krow";
   last.appendChild(key("Shift", `wide-s ${note.shift ? "shift-on" : ""}`, () => { note.shift = !note.shift; renderNote(); }));
   last.appendChild(key("space", "grow", () => noteType(" ")));
-  last.appendChild(key(note.armed ? "Confirm" : "Delete", `wide-b ${note.armed ? "armed" : "danger"} ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
-  last.appendChild(key("Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
+  if (note.kind === "note") {
+    last.appendChild(key(note.armed ? "Confirm" : "Delete", `wide-b ${note.armed ? "armed" : "danger"} ${note.focus === NOTE_DELETE ? "focus" : ""}`, noteDelete));
+  }
+  last.appendChild(key(note.kind === "rename" ? "Cancel" : "Skip", `wide-b ${note.focus === NOTE_SKIP ? "focus" : ""}`, noteSkip));
   last.appendChild(key("Save", `wide-b accent ${note.focus === NOTE_SAVE ? "focus" : ""}`, noteSave));
   keys.appendChild(last);
 }
@@ -214,6 +308,7 @@ function renderNote() {
 
 btnSettings.addEventListener("click", () => tap(SETTINGS));
 btnStyle.addEventListener("click", () => tap(STYLE));
+btnBack.addEventListener("click", () => tap(0));
 document.getElementById("overlay-back").addEventListener("click", back);
 
 window.addEventListener("keydown", (e) => {
@@ -244,6 +339,7 @@ function fit() {
 window.addEventListener("resize", fit);
 
 fit();
+renderTiles();
 renderTimes();
 renderNav();
 let lastSecond = store.now();
