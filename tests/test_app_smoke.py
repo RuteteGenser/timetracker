@@ -7,6 +7,8 @@ os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 from pathlib import Path
 
+import timetracker
+
 import pytest
 
 pytest.importorskip("PySide6.QtQml")
@@ -151,8 +153,9 @@ def test_settings_rows_open_screens_and_back_goes_up_one_level(ui):
     key(window, Qt.Key.Key_Right)          # clamps at the last row
     assert ctl.listSelected == 2
     key(window, Qt.Key.Key_Space)
-    assert ctl.screen == "status"
-    key(window, Qt.Key.Key_Space)          # placeholder: any press goes back
+    assert ctl.screen == "status" and ctl.screenIsList
+    key(window, Qt.Key.Key_Left)           # Back is the first row
+    key(window, Qt.Key.Key_Space)
     assert ctl.screen == "settings"
 
 
@@ -1085,3 +1088,51 @@ def test_a_list_with_a_note_shows_one_row_less_and_still_reaches_every_row(ui, c
     ctl.back(); ctl.back(); ctl.back()
     ctl.tap(0)                                  # Settings: no note, six rows fit
     assert ctl.listVisible == 6
+
+
+# -- Status -------------------------------------------------------------------------------------------
+
+def open_status(ctl):
+    ctl.tap(0)                                  # Settings
+    ctl.tap(2)                                  # Status
+
+
+def status(ctl):
+    return {r["label"]: r["value"] for r in ctl.listRows if r["id"] == "info"}
+
+
+def test_status_lists_the_facts_and_info_rows_do_nothing(ui, clock):
+    ctl, window, db = ui
+    open_status(ctl)
+    assert ctl.screen == "status" and ctl.listTitle == "Status"
+    facts = status(ctl)
+    assert list(facts) == ["Clock check", "Time now", "Last time change", "Hardware clock", "Projects", "Entries", "Storage", "Version"]
+    assert facts["Clock check"] == "OK" and facts["Last time change"] == "never"
+    assert facts["Projects"] == "6" and facts["Entries"] == "0"
+    assert facts["Storage"].endswith("GB free") and facts["Version"] == timetracker.__version__
+    key(window, Qt.Key.Key_Space)                # an info row: nothing happens
+    assert ctl.screen == "status"
+
+
+def test_status_shows_a_clock_problem_a_clock_change_and_counts(ui, clock, db):
+    ctl, window, _ = ui
+    track(window, clock, 120)
+    ctl.tap(0); ctl.tap(1)                       # Settings -> Date & time
+    ctl.dtAdjust(3, 2)
+    ctl.dtSave()                                 # changes the clock: recorded
+    ctl.back()                                   # Settings -> main
+    db.archive_project(db.list_projects()[3].id)
+    ctl.reload_projects()
+    db.set_meta("last_seen", str(clock() + 4 * 3600))
+    open_status(ctl)
+    facts = status(ctl)
+    assert "behind" in facts["Clock check"]
+    assert "\u2192" in facts["Last time change"]
+    assert facts["Projects"] == "5 (1 archived)" and facts["Entries"] == "1"
+
+
+def test_status_back_row_returns_to_settings(ui):
+    ctl, window, _ = ui
+    open_status(ctl)
+    ctl.tap(0)
+    assert ctl.screen == "settings"

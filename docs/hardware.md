@@ -66,6 +66,13 @@ tiny root-owned helper through `sudo`. It is installed by the setup guide (miles
 - `driver = "system"` under `[clock]` in `config.toml`. On a PC the default `"offset"` driver leaves the
   computer's clock alone and the app keeps its own offset.
 
+## Status page and the RTC battery
+
+Settings > Status shows "Hardware clock": `not found` on a PC, `found, battery unknown` when the Pi's
+RTC is present, and the battery voltage when the kernel exposes it. The name of the voltage file in
+`src/timetracker/hardware.py` is the one used by the Pi 5 driver as far as known and has not been
+checked on a real board; treat a missing voltage as "unknown", not as a fault.
+
 ## Not yet verified
 
 Nothing has been tested on real hardware yet; GPIO input and kiosk boot arrive

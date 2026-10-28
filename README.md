@@ -3,8 +3,27 @@
 A fully offline desk time tracker for a Raspberry Pi: a knob and a button for
 daily use (pick a project, start/stop), a touchscreen for everything else.
 
-Status: **milestone 1** (PC app with simulated controls). See `docs/hardware.md`
+Status: the PC app and the browser version are feature-complete for milestones 1-3
+(tracking, notes, reports, project management, entry editing, colours, clock setting).
+Not done yet: the power-loss kill test (milestone 4) and everything that needs a real
+Pi: GPIO input, kiosk boot and the setup guide (milestones 5-6). See `docs/hardware.md`
 for the parts list and wiring.
+
+## What is on each screen
+
+- **Main:** the project cards (press to start or stop; stopping asks for an optional note) and
+  the column Settings / Style / Reports.
+- **Style:** per card, colour (8 steps), name, a reset for today's time (two presses), and **More**
+  (archive, move left / right, delete). A **+** card adds a project; **Archived** lists hidden
+  projects (restore or delete).
+- **Reports:** day / week / month bar charts per project; step to older periods with the knob.
+  **Entries** lists the entries of the period shown; each can be edited (project, start, end,
+  note) or deleted. Changes that would overlap another entry, put the end before the start or
+  lie in the future are refused with the reason.
+- **Settings:** **Date & time** (sets the clock; a running timer keeps its elapsed time) and
+  **Status** (clock check, last clock change, hardware clock, storage, counts, version).
+- Destructive actions (delete, reset today) always need a second press, shown in dark red or
+  orange.
 
 ## Run on a PC
 

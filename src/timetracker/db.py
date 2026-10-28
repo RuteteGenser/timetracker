@@ -73,6 +73,7 @@ class Database:
             Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
             path = Path(path).expanduser()
         # isolation_level=None: we issue BEGIN/COMMIT ourselves.
+        self.path = Path(path) if str(path) != ":memory:" else None
         self._conn = sqlite3.connect(str(path), isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -315,6 +316,9 @@ class Database:
             {"now": now, "start": start, "end": end},
         )
         return {r["project_id"]: r["secs"] for r in rows}
+
+    def count_entries(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
 
     def earliest_timestamp(self) -> int | None:
         """The start of the oldest entry, or None if there are no entries."""

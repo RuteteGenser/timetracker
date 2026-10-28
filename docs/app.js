@@ -6,6 +6,7 @@
 import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
 import { Store, EntryError, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
 import { KINDS, periodBounds, shiftPeriod, stepLimits, summary } from "./summaries.js";
+import { statusRows } from "./status.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
 // Style screen: column items Back and Archived, then four parts per card in the order the knob
@@ -26,10 +27,9 @@ const SCREEN_PARENT = { // where Back goes
   style: "main", settings: "main", reports: "main", clockwarn: "main", datetime: "settings", status: "settings",
   projectmenu: "style", archived: "style", archivedmenu: "archived", entries: "reports", entryedit: "entries",
 };
-const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit"]);
+const LIST_SCREENS = new Set(["settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit", "status"]);
 const NOTE_LISTS = new Set(["clockwarn", "entryedit"]); // list screens with an explanation under the title (one row less fits)
-const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check", archived: "Archived projects" };
-const PLACEHOLDER_TITLES = { status: "Status" };
+const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check", archived: "Archived projects", status: "Status" };
 let clockProblem = ""; // message of the clock warning being shown
 let returnTo = null; // where Back from Date & time goes, if not Settings
 let list = new ListNav(0);
@@ -44,7 +44,6 @@ const listMemory = {}; // selected row of list screens we left, restored on Back
 
 const stage = document.getElementById("stage");
 const strip = document.getElementById("strip");
-const overlay = document.getElementById("overlay");
 const btnSettings = document.getElementById("btn-settings");
 const btnStyle = document.getElementById("btn-style");
 const btnReports = document.getElementById("btn-reports");
@@ -159,12 +158,10 @@ function renderNav() {
   strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
   const isList = LIST_SCREENS.has(screen);
   document.getElementById("list").classList.toggle("on", isList);
-  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && screen !== "datetime" && screen !== "reports" && !isList);
   document.getElementById("rep").classList.toggle("on", screen === "reports");
   if (screen === "reports") renderRep();
   document.getElementById("dt").classList.toggle("on", screen === "datetime");
   if (screen === "datetime") renderDt();
-  document.getElementById("overlay-title").textContent = PLACEHOLDER_TITLES[screen] ?? "";
   if (isList) renderList();
 }
 
@@ -227,6 +224,7 @@ function rowsFor(name) {
     return [row("back", "Back"), ...archived.map((p) => row(`project:${p.id}`, p.name, "Restore or delete"))];
   }
   if (name === "archivedmenu") return [row("back", "Cancel"), row("restore", "Restore"), del];
+  if (name === "status") return [row("back", "Back"), ...statusRows(store).map((r) => row("info", r.label, r.value))];
   if (name === "entries") return entryRows(row);
   if (name === "entryedit") {
     const e = store.entry(entryId);
@@ -302,7 +300,7 @@ function activateList(index) {
   else if (r.id === "start" || r.id === "end") openDatetime("entryedit", r.id);
   else if (r.id === "note") openEntryNote();
   else if (r.id.startsWith("project:")) { menuPid = Number(r.id.slice(8)); menuArmed = false; openScreen("archivedmenu"); }
-  else if (r.id === "none") return;
+  else if (r.id === "none" || r.id === "info") return; // nothing to open
   else openScreen(r.id);
 }
 
@@ -489,7 +487,6 @@ function press() {
   else if (LIST_SCREENS.has(screen)) { activateList(list.selected); renderNav(); }
   else if (screen === "datetime") dtPress();
   else if (screen === "reports") repPress();
-  else if (screen !== "main" && screen !== "style") back(); // placeholder screens: any press goes back
   else activate(nav.selected);
 }
 
@@ -943,7 +940,6 @@ btnArchived.addEventListener("click", () => tap(1));
 addTile.addEventListener("click", () => { if (screen === "style") tap(STYLE_COLUMN + STYLE_PARTS * tiles.length); });
 btnReports.addEventListener("click", () => tap(REPORTS));
 btnBack.addEventListener("click", () => tap(0));
-document.getElementById("overlay-back").addEventListener("click", back);
 document.getElementById("dt-cancel").addEventListener("click", back);
 document.getElementById("dt-save").addEventListener("click", dtSave);
 

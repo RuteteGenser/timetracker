@@ -1,15 +1,18 @@
 """Glue between the database, the knob/button and the QML screens."""
 
 import calendar
+import shutil
 import time
 from datetime import datetime
 from typing import Callable
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
-from .clock import ACK_REF, LAST_SEEN, ClockBackend, ClockError, check_clock, clock_reference
+from . import __version__
+from .clock import ACK_REF, LAST_CHANGE, LAST_SEEN, ClockBackend, ClockError, check_clock, clock_reference
 from .colors import COLOR_CYCLE, next_color
 from .db import Database, Entry, EntryError
+from .hardware import rtc_info
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
 from .summaries import KINDS, period_bounds, shift_period, step_limits, summary
@@ -39,8 +42,8 @@ SCREEN_PARENT = {  # where Back goes
     "projectmenu": "style", "archived": "style", "archivedmenu": "archived",
     "entries": "reports", "entryedit": "entries",
 }
-LIST_SCREENS = {"settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit"}
-LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check", "archived": "Archived projects"}
+LIST_SCREENS = {"settings", "clockwarn", "projectmenu", "archived", "archivedmenu", "entries", "entryedit", "status"}
+LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check", "archived": "Archived projects", "status": "Status"}
 NOTE_LISTS = {"clockwarn", "entryedit"}  # list screens with an explanation under the title
 
 # Date & time screen: five fields, then Cancel and Save. The knob moves the outline over them;
@@ -388,6 +391,8 @@ class Controller(QObject):
             return [row("back", "Back")] + [row(f"project:{p.id}", p.name, "Restore or delete") for p in archived]
         if screen == "archivedmenu":
             return [row("back", "Cancel"), row("restore", "Restore"), delete]
+        if screen == "status":
+            return self._status_rows(row)
         if screen == "entries":
             return self._entry_rows(row)
         if screen == "entryedit":
@@ -456,8 +461,8 @@ class Controller(QObject):
             self._menu_pid = int(row_id.split(":", 1)[1])
             self._menu_armed = False
             self._open_screen("archivedmenu")
-        elif row_id == "none":
-            return
+        elif row_id in ("none", "info"):
+            return  # nothing to open
         else:
             self._open_screen(row_id)
 
@@ -1009,3 +1014,36 @@ class Controller(QObject):
         self._list_rows = self._rows_for("entryedit")
         self.listChanged.emit()
         self.screenChanged.emit()  # the note under the title may have changed
+
+    # -- status ------------------------------------------------------------------------------------
+
+    def _status_rows(self, row) -> list[dict]:
+        """Facts for troubleshooting: is the clock trustworthy, how full is the disk, what is stored."""
+        now = int(self._clock())
+        problem = check_clock(self._db, now)
+        change = self._db.get_meta(LAST_CHANGE)
+        if change:
+            old, new = (int(x) for x in change.split(","))
+            changed = f"{datetime.fromtimestamp(old):%d %b %H:%M} \u2192 {datetime.fromtimestamp(new):%d %b %H:%M}"
+        else:
+            changed = "never"
+        projects = self._db.list_projects(include_archived=True)
+        archived = sum(1 for p in projects if p.archived)
+        free = "unknown"
+        if self._db.path is not None:
+            try:
+                free = f"{shutil.disk_usage(self._db.path.parent).free / 1e9:.1f} GB free"
+            except OSError:
+                pass
+        info = lambda label, value: row("info", label, value)  # noqa: E731
+        return [
+            row("back", "Back"),
+            info("Clock check", problem or "OK"),
+            info("Time now", f"{datetime.fromtimestamp(now):%d %b %Y  %H:%M}"),
+            info("Last time change", changed),
+            info("Hardware clock", rtc_info()),
+            info("Projects", f"{len(projects) - archived}" + (f" ({archived} archived)" if archived else "")),
+            info("Entries", str(self._db.count_entries())),
+            info("Storage", free),
+            info("Version", __version__),
+        ]

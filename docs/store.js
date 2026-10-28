@@ -222,6 +222,15 @@ export class Store {
     }
   }
 
+  /** How many characters of data are saved in this browser (for the Status page). */
+  dataSize() {
+    try {
+      return (this.storage.getItem(KEY) ?? "").length;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   /** The start of the oldest entry, or null if there are no entries. */
   earliestTimestamp() {
     return this.data.entries.length ? Math.min(...this.data.entries.map((e) => e.start)) : null;

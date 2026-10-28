@@ -51,14 +51,6 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .selected::before { content: ""; position: absolute; inset: -7px; border: 6px solid #fff; border-radius: 27px;
   z-index: 2; pointer-events: none; }
 
-#overlay { position: absolute; inset: 0; background: #101216; display: none; flex-direction: column;
-  align-items: center; justify-content: center; gap: 24px; }
-#overlay.on { display: flex; }
-#overlay h1 { margin: 0; font-size: 56px; }
-#overlay p { margin: 0; font-size: 28px; color: #aab2bf; }
-#overlay .back { width: 260px; height: 90px; border-radius: 20px; background: #2a2f39; border: 5px solid #fff;
-  display: flex; align-items: center; justify-content: center; font-size: 34px; font-weight: 700; cursor: pointer; }
-
 #hint { position: fixed; left: 0; right: 0; bottom: 6px; text-align: center; font-size: 13px; color: #6b7380; pointer-events: none; }
 
 /* Note prompt (after a timer stops) */

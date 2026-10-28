@@ -138,15 +138,6 @@ Window {
         visible: ctl.screen === "reports"
     }
 
-    Loader {   // screens that are not built yet
-        anchors.fill: parent
-        active: ctl.screen !== "main" && ctl.screen !== "style" && ctl.screen !== "datetime" && ctl.screen !== "reports" && !ctl.screenIsList
-        sourceComponent: Placeholder {
-            title: "Status"
-            note: "Coming soon. Press the button to go back."
-        }
-    }
-
     NotePrompt {
         anchors.fill: parent
         visible: ctl.notePromptOpen
