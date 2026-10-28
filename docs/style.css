@@ -95,3 +95,25 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
   display: flex; align-items: center; justify-content: space-between; font-size: 34px; font-weight: 700; cursor: pointer; }
 .lrow.back { background: #2a2f39; }
 .lrow .value { font-size: 30px; font-weight: 400; color: #aab2bf; }
+
+/* list screens can carry a note under the title (the clock warning) */
+#list-note { position: absolute; left: 23px; right: 23px; top: 79px; margin: 0; font-size: 28px; color: #aab2bf; display: none; }
+#list.has-note #list-note { display: block; }
+#list.has-note #list-rows { top: 205px; }
+
+/* Date & time */
+#dt { position: absolute; inset: 0; background: #101216; display: none; }
+#dt.on { display: block; }
+#dt h1 { position: absolute; left: 23px; top: 15px; margin: 0; height: 60px; line-height: 60px; font-size: 40px; }
+#dt-hint { position: absolute; left: 23px; right: 23px; top: 77px; margin: 0; font-size: 26px; color: #aab2bf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#dt-hint.error { color: #ff7b7b; }
+#dt-cols { position: absolute; left: 15px; right: 15px; top: 135px; display: flex; gap: 16px; }
+.dtcol { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.dtcol .key { flex: none; height: 76px; }
+.dtlabel { text-align: center; font-size: 26px; color: #aab2bf; height: 28px; }
+.dtval { position: relative; height: 150px; border-radius: 4px; background: #1f232b; font-size: 64px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.dtval.editing { background: #3274d1; }
+.dtval.focus::before { content: ""; position: absolute; inset: 0; border: 6px solid #fff; border-radius: 4px; pointer-events: none; }
+#dt-buttons { position: absolute; left: 15px; bottom: 35px; display: flex; gap: 16px; }
+#dt-buttons .key { flex: none; width: 260px; height: 84px; }

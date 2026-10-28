@@ -91,13 +91,16 @@ class ListNav:
     rows follows the selection. Row 0 is normally Back, so turning counter-clockwise from the
     first real row reaches it."""
 
-    def __init__(self, count: int = 0, visible: int = 6):
+    def __init__(self, count: int = 0, visible: int = 6, default: int | None = None):
         self.count = count
         self.visible = visible
+        self._default_row = default
         self.selected = self._default()
         self.offset = 0  # first visible row
 
     def _default(self) -> int:
+        if self._default_row is not None:
+            return min(self._default_row, max(0, self.count - 1))
         return 1 if self.count > 1 else 0  # the first real row, not Back
 
     def reset(self) -> None:

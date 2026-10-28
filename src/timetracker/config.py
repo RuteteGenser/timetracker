@@ -8,6 +8,7 @@ from pathlib import Path
 @dataclass
 class Config:
     input_driver: str = "sim"
+    clock_driver: str = "offset"
     encoder_a: int = 17
     encoder_b: int = 27
     button: int = 22
@@ -25,6 +26,7 @@ def load_config(path: str | Path | None = None) -> Config:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
     cfg.input_driver = raw.get("input", {}).get("driver", cfg.input_driver)
+    cfg.clock_driver = raw.get("clock", {}).get("driver", cfg.clock_driver)
     gpio = raw.get("gpio", {})
     cfg.encoder_a = gpio.get("encoder_a", cfg.encoder_a)
     cfg.encoder_b = gpio.get("encoder_b", cfg.encoder_b)

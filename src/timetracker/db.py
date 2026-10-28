@@ -248,6 +248,22 @@ class Database:
         )
         return {r["project_id"]: r["secs"] for r in rows}
 
+    def latest_timestamp(self) -> int:
+        """The newest start or end time of any entry, 0 if there are none."""
+        row = self._conn.execute("SELECT MAX(start_ts), MAX(end_ts) FROM entries").fetchone()
+        return max(row[0] or 0, row[1] or 0)
+
+    def shift_running(self, delta: int, meta: dict[str, str] | None = None) -> None:
+        """Move the running timer's start by delta seconds and save meta values, in one
+        transaction. Used when the clock is set, so the elapsed time does not jump."""
+        with self._tx():
+            self._conn.execute("UPDATE entries SET start_ts = start_ts + ? WHERE end_ts IS NULL", (delta,))
+            for key, value in (meta or {}).items():
+                self._conn.execute(
+                    "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+
     # -- meta -------------------------------------------------------------
 
     def get_meta(self, key: str) -> str | None:

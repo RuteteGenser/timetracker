@@ -3,6 +3,11 @@
 
 const KEY = "timetracker.v1";
 
+// Mirrors src/timetracker/clock.py. The browser's own clock cannot be set, so "set date and time"
+// keeps an offset (`clockOffset`) that is added to it.
+export const MIN_PLAUSIBLE = new Date(2026, 0, 1).getTime() / 1000; // the software was made in 2026
+export const CLOCK_TOLERANCE = 120; // seconds the clock may look behind before we warn
+
 // The Style screen steps through these on every press (dark enough for white text).
 export const COLOR_CYCLE = ["#c8424e", "#d9722f", "#b8861b", "#2f9a58", "#1a948f", "#3274d1", "#9250b4", "#cc4a93"];
 
@@ -16,6 +21,13 @@ const STARTERS = [
   ["Work", "#3274d1"], ["Admin", "#9250b4"], ["Learning", "#1a948f"],
   ["Meetings", "#c8424e"], ["Personal", "#b8861b"], ["Other", "#2f9a58"],
 ];
+
+function spanText(seconds) {
+  seconds = Math.abs(Math.floor(seconds));
+  if (seconds < 3600) return `${Math.max(1, Math.floor(seconds / 60))} min`;
+  if (seconds < 2 * 86400) return `${Math.floor(seconds / 3600)} h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")} min`;
+  return `${Math.floor(seconds / 86400)} days`;
+}
 
 export function dayBounds(ts) {
   const d = new Date(ts * 1000);
@@ -38,7 +50,7 @@ export class Store {
   }
 
   now() {
-    return Math.floor(this.clock());
+    return Math.floor(this.clock() + (this.data.clockOffset ?? 0));
   }
 
   #load() {
@@ -139,6 +151,66 @@ export class Store {
       }
     }
     this.data.entries = keep;
+    this.#save();
+  }
+
+  // -- clock: setting it, and whether it can be trusted -------------------------------------
+
+  /**
+   * Set the clock to newTs. A running timer keeps its elapsed time (its start moves by the same
+   * amount). Everything is saved together. Returns how far the clock moved, in seconds.
+   */
+  setTime(newTs) {
+    const old = this.now();
+    const delta = newTs - old;
+    this.data.clockOffset = (this.data.clockOffset ?? 0) + delta;
+    const run = this.running();
+    if (run) run.start += delta;
+    this.data.lastSeen = newTs;
+    this.data.lastClockChange = [old, newTs];
+    this.#save();
+    return delta;
+  }
+
+  lastSeen() {
+    return this.data.lastSeen ?? 0;
+  }
+
+  /** Remember the latest time the clock showed; it only moves forward (setTime resets it itself). */
+  heartbeat(now) {
+    if (now > this.lastSeen()) {
+      this.data.lastSeen = now;
+      this.#save();
+    }
+  }
+
+  /** The newest start or end time of any entry, 0 if there are none. */
+  latestTimestamp() {
+    return this.data.entries.reduce((m, e) => Math.max(m, e.start, e.end ?? 0), 0);
+  }
+
+  clockReference() {
+    return Math.max(this.lastSeen(), this.latestTimestamp());
+  }
+
+  /** A message when the clock looks wrong, otherwise "". */
+  clockProblem() {
+    const now = this.now();
+    if (now < MIN_PLAUSIBLE) {
+      return `The date looks too early (${new Date(now * 1000).toLocaleDateString("en", { day: "2-digit", month: "short", year: "numeric" })}). The clock probably lost its time.`;
+    }
+    const ref = this.clockReference();
+    if (ref > (this.data.clockAck ?? 0) && now < ref - CLOCK_TOLERANCE) {
+      const when = new Date(ref * 1000).toLocaleString("en", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+      return `The clock is ${spanText(ref - now)} behind the last recorded time (${when}).`;
+    }
+    return "";
+  }
+
+  /** The user dismissed the warning: it does not come back until the reference moves on. */
+  ignoreClockProblem() {
+    this.data.clockAck = this.clockReference();
+    this.data.lastSeen = this.now();
     this.#save();
   }
 

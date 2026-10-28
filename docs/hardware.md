@@ -55,6 +55,17 @@ dtparam=rtc_bbat_vchg=3000000
 
 (The setup guide, milestone 6, will include this step.)
 
+## Setting the clock from the app (Pi only)
+
+Settings > Date & time sets the real clock. A normal user may not do that, so on the Pi the app calls a
+tiny root-owned helper through `sudo`. It is installed by the setup guide (milestone 6); the design is:
+
+- `/usr/local/bin/timetracker-set-time EPOCH`: checks that `EPOCH` is a plain number in a sane range, runs
+  `timedatectl set-time` with it and then `hwclock --systohc` so the Pi 5's RTC keeps the new time.
+- a sudoers line that allows the app's user to run *only that script* without a password.
+- `driver = "system"` under `[clock]` in `config.toml`. On a PC the default `"offset"` driver leaves the
+  computer's clock alone and the app keeps its own offset.
+
 ## Not yet verified
 
 Nothing has been tested on real hardware yet; GPIO input and kiosk boot arrive

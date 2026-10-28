@@ -309,3 +309,101 @@ test("list: setCount clamps", () => {
   n.setCount(3);
   assert.deepEqual([n.selected, n.offset], [2, 0]);
 });
+
+// -- clock: setting it and the sanity check ----------------------------------------------------
+
+import { MIN_PLAUSIBLE } from "../../docs/store.js";
+
+const T0 = 1_800_000_000; // after 2026, so it looks sane
+
+test("setTime moves the clock, keeps a running timer's elapsed time and resets the heartbeat", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  s.start(s.projects()[0].id);
+  state.t += 300;
+  const elapsed = s.now() - s.running().start;
+  const delta = s.setTime(s.now() + 5 * 3600);
+  assert.equal(delta, 5 * 3600);
+  assert.equal(s.now() - s.running().start, elapsed);
+  assert.equal(s.lastSeen(), s.now());
+});
+
+test("setTime backwards keeps elapsed time too, and finished entries are untouched", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  const [a, b] = s.projects();
+  s.start(a.id); state.t += 60; const done = s.stop();
+  const start = done.start, end = done.end;
+  s.start(b.id); state.t += 90;
+  s.setTime(s.now() - 3 * 86400);
+  assert.equal(s.now() - s.running().start, 90);
+  assert.deepEqual([done.start, done.end], [start, end]);
+});
+
+test("the clock offset persists across a reload", () => {
+  const state = { t: T0 };
+  const storage = memory();
+  const s = new Store(storage, () => state.t);
+  s.setTime(s.now() + 86400);
+  const again = new Store(storage, () => state.t);
+  assert.equal(again.now(), s.now());
+});
+
+test("a fresh store with a sane clock has no clock problem", () => {
+  assert.equal(new Store(memory(), () => T0).clockProblem(), "");
+});
+
+test("a date before the software existed is flagged", () => {
+  assert.match(new Store(memory(), () => MIN_PLAUSIBLE - 86400).clockProblem(), /too early/);
+});
+
+test("a clock behind the last seen time is flagged, small differences are not", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  s.heartbeat(T0 + 5 * 3600);
+  assert.match(s.clockProblem(), /5 h 00 min behind/);
+  state.t = T0 + 5 * 3600 - 60;
+  assert.equal(s.clockProblem(), "");
+});
+
+test("a clock behind the newest entry is flagged even without a heartbeat", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  s.start(s.projects()[0].id); state.t += 1000; s.stop();
+  state.t -= 86400;
+  assert.match(s.clockProblem(), /behind/);
+});
+
+test("ignoring a warning silences it until the reference moves on", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  s.heartbeat(T0 + 3600);
+  assert.notEqual(s.clockProblem(), "");
+  s.ignoreClockProblem();
+  assert.equal(s.clockProblem(), "");
+  s.heartbeat(s.now() + 7200);
+  assert.notEqual(s.clockProblem(), "");
+});
+
+test("the heartbeat only moves forward", () => {
+  const s = new Store(memory(), () => T0);
+  s.heartbeat(T0 + 100);
+  s.heartbeat(T0 + 50);
+  assert.equal(s.lastSeen(), T0 + 100);
+});
+
+test("latestTimestamp", () => {
+  const state = { t: T0 };
+  const s = new Store(memory(), () => state.t);
+  assert.equal(s.latestTimestamp(), 0);
+  const e = s.start(s.projects()[0].id);
+  assert.equal(s.latestTimestamp(), e.start);
+  state.t += 50; s.stop();
+  assert.equal(s.latestTimestamp(), e.start + 50);
+});
+
+test("list: a default row can be chosen", () => {
+  assert.equal(new ListNav(2, 6, 0).selected, 0);
+  assert.equal(new ListNav(5, 6, 3).selected, 3);
+  assert.equal(new ListNav(2, 6, 9).selected, 1);
+});

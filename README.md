@@ -36,6 +36,13 @@ and no server: open `docs/index.html` through any static web server
 - Its strip logic mirrors `src/timetracker/nav.py`; the real device app is the
   Python one.
 
+## Clock
+
+There is no internet on the device, so the app guards its own clock: Settings > Date & time sets it (a
+running timer keeps its elapsed time), and at start, or if the time jumps back, a "Clock check" screen
+warns when the clock is behind the last recorded time or before 2026. See `docs/hardware.md` for the
+Pi's RTC battery and the helper script that lets the app set the real clock.
+
 ## Tests
 
 ```bash

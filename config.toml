@@ -5,6 +5,11 @@
 # "gpio": rotary encoder and push button on the Raspberry Pi header
 driver = "sim"
 
+[clock]
+# "offset": for PC development, the system clock is left alone and the app keeps its own offset
+# "system": on the Pi, setting the time sets the real clock and the RTC (needs the helper script)
+driver = "offset"
+
 [gpio]
 # BCM GPIO numbers (see docs/wiring.md)
 encoder_a = 17   # CLK, physical pin 11

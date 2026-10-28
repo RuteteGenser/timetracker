@@ -21,9 +21,20 @@ Rectangle {
         font.bold: true
     }
 
+    Text {   // an explanation under the title (the clock warning uses it)
+        visible: ctl.listNote.length > 0
+        x: root.pad + 8 * root.u; y: root.pad + 64 * root.u
+        width: root.width - 2 * root.pad - 16 * root.u
+        text: ctl.listNote
+        color: "#aab2bf"
+        font.pixelSize: 28 * root.u
+        wrapMode: Text.WordWrap
+        maximumLineCount: 3
+    }
+
     Item {   // rows are cut off at the edges of this area, with room left for the outline
         id: view
-        x: root.pad; y: root.pad + 70 * root.u
+        x: root.pad; y: root.pad + 70 * root.u + (ctl.listNote.length > 0 ? 120 * root.u : 0)
         width: root.width - 2 * root.pad
         height: root.height - y - root.pad
         clip: true

@@ -85,14 +85,16 @@ export class StripNav {
  * selection. Row 0 is normally Back, so turning left from the first real row reaches it.
  */
 export class ListNav {
-  constructor(count = 0, visible = 6) {
+  constructor(count = 0, visible = 6, defaultRow = null) {
     this.count = count;
     this.visible = visible;
+    this.defaultRow = defaultRow;
     this.selected = this.#default();
     this.offset = 0; // first visible row
   }
 
   #default() {
+    if (this.defaultRow !== null) return Math.min(this.defaultRow, Math.max(0, this.count - 1));
     return this.count > 1 ? 1 : 0; // the first real row, not Back
   }
 

@@ -18,11 +18,13 @@ let nav = new StripNav(projectCount);
 let screen = "main"; // a key of SCREEN_PARENT, or "main"
 // Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
 const SCREEN_PARENT = { // where Back goes
-  style: "main", settings: "main", reports: "main", datetime: "settings", status: "settings",
+  style: "main", settings: "main", reports: "main", clockwarn: "main", datetime: "settings", status: "settings",
 };
-const LIST_SCREENS = new Set(["settings"]);
-const LIST_TITLES = { settings: "Settings" };
-const PLACEHOLDER_TITLES = { reports: "Reports", datetime: "Date & time", status: "Status" };
+const LIST_SCREENS = new Set(["settings", "clockwarn"]);
+const LIST_TITLES = { settings: "Settings", clockwarn: "Clock check" };
+const PLACEHOLDER_TITLES = { reports: "Reports", status: "Status" };
+let clockProblem = ""; // message of the clock warning being shown
+let returnTo = null; // where Back from Date & time goes, if not Settings
 let list = new ListNav(0);
 let listRows = []; // rows of the current list screen: { id, label, value }
 let resetArmed = null; // Style item whose time reset waits for its confirming second press
@@ -133,13 +135,18 @@ function renderNav() {
   strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
   const isList = LIST_SCREENS.has(screen);
   document.getElementById("list").classList.toggle("on", isList);
-  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && !isList);
+  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && screen !== "datetime" && !isList);
+  document.getElementById("dt").classList.toggle("on", screen === "datetime");
+  if (screen === "datetime") renderDt();
   document.getElementById("overlay-title").textContent = PLACEHOLDER_TITLES[screen] ?? "";
   if (isList) renderList();
 }
 
 function renderList() {
   document.getElementById("list-title").textContent = LIST_TITLES[screen];
+  const note = screen === "clockwarn" ? clockProblem : "";
+  document.getElementById("list-note").textContent = note;
+  document.getElementById("list").classList.toggle("has-note", note !== "");
   const box = document.getElementById("list-rows");
   box.replaceChildren();
   listRows.slice(list.offset, list.offset + list.visible).forEach((r, i) => {
@@ -164,6 +171,7 @@ function rowsFor(name) {
     const when = `${p2(d.getDate())} ${d.toLocaleString("en", { month: "short" })} ${d.getFullYear()}  ${p2(d.getHours())}:${p2(d.getMinutes())}`;
     return [row("back", "Back"), row("datetime", "Date & time", when), row("status", "Status")];
   }
+  if (name === "clockwarn") return [row("datetime", "Set date and time"), row("ignore", "Ignore")];
   return [];
 }
 
@@ -171,7 +179,7 @@ function rowsFor(name) {
 function openScreen(name) {
   if (LIST_SCREENS.has(name)) {
     listRows = rowsFor(name);
-    list = new ListNav(listRows.length);
+    list = new ListNav(listRows.length, 6, name === "clockwarn" ? 0 : null);
   }
   screen = name;
 }
@@ -180,6 +188,8 @@ function activateList(index) {
   const r = listRows[index];
   if (!r) return;
   if (r.id === "back") back();
+  else if (r.id === "ignore") ignoreClockProblem();
+  else if (r.id === "datetime") openDatetime(screen === "clockwarn" ? "main" : null);
   else openScreen(r.id);
 }
 
@@ -199,6 +209,12 @@ function turn(steps) {
   }
   if (LIST_SCREENS.has(screen)) {
     list.move(steps);
+    renderNav();
+    return;
+  }
+  if (screen === "datetime") {
+    if (dt.editing) dtAdjust(dt.focus, steps);
+    else dt.focus = Math.max(0, Math.min(DT_SAVE, dt.focus + steps));
     renderNav();
     return;
   }
@@ -256,7 +272,8 @@ function activate(index) {
 }
 
 function back() { // go up one level; the main screen comes back in its default view
-  const parent = SCREEN_PARENT[screen] ?? "main";
+  const parent = returnTo || SCREEN_PARENT[screen] || "main";
+  returnTo = null;
   if (parent === "main") {
     useNav(new StripNav(nav.projectCount));
     screen = "main";
@@ -269,6 +286,7 @@ function back() { // go up one level; the main screen comes back in its default 
 function press() {
   if (note) [noteDelete, noteSkip, noteSave][note.focus]();
   else if (LIST_SCREENS.has(screen)) { activateList(list.selected); renderNav(); }
+  else if (screen === "datetime") dtPress();
   else if (screen !== "main" && screen !== "style") back(); // placeholder screens: any press goes back
   else activate(nav.selected);
 }
@@ -286,6 +304,111 @@ function tap(index) {
   nav.select(index);
   if (nav.selected !== before) resetArmed = null;
   activate(index);
+}
+
+// -- clock: sanity check and the Date & time screen ---------------------------------------
+
+// Five fields, then Cancel and Save. The knob moves the outline over them; pressing a field edits it
+// (turn changes the value, press again to finish).
+const DT_CANCEL = 5;
+const DT_SAVE = 6;
+const DT_LABELS = ["Year", "Month", "Day", "Hour", "Minute"];
+let dt = { initial: [], fields: [], focus: 0, editing: false, error: "" };
+let lastBeat = 0;
+
+const daysIn = (y, m) => new Date(y, m, 0).getDate();
+
+function runClockCheck() { // at start, and when the clock jumps back while running
+  const problem = store.clockProblem();
+  if (problem) {
+    clockProblem = problem;
+    openScreen("clockwarn");
+    renderNav();
+  }
+}
+
+function ignoreClockProblem() {
+  store.ignoreClockProblem();
+  clockProblem = "";
+  back();
+}
+
+function openDatetime(returnScreen = null) {
+  const d = new Date(store.now() * 1000);
+  dt = { initial: [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()], focus: 0, editing: false, error: "" };
+  dt.fields = [...dt.initial];
+  returnTo = returnScreen;
+  screen = "datetime";
+}
+
+function dtAdjust(field, delta) {
+  let [year, month, day, hour, minute] = dt.fields;
+  if (field === 0) year = Math.max(2020, Math.min(2099, year + delta));
+  else if (field === 1) month = ((month - 1 + delta) % 12 + 12) % 12 + 1;
+  else if (field === 2) { const n = daysIn(year, month); day = ((day - 1 + delta) % n + n) % n + 1; }
+  else if (field === 3) hour = ((hour + delta) % 24 + 24) % 24;
+  else minute = ((minute + delta) % 60 + 60) % 60;
+  day = Math.min(day, daysIn(year, month)); // 31 Jan -> Feb becomes 28/29
+  dt.fields = [year, month, day, hour, minute];
+  dt.error = "";
+}
+
+function dtPress() {
+  if (dt.focus < DT_CANCEL) { dt.editing = !dt.editing; renderNav(); }
+  else if (dt.focus === DT_CANCEL) back();
+  else dtSave();
+}
+
+function dtSave() { // a running timer keeps its elapsed time
+  if (dt.fields.every((v, i) => v === dt.initial[i])) { back(); return; }
+  const [y, mo, d, h, mi] = dt.fields;
+  store.setTime(Math.floor(new Date(y, mo - 1, d, h, mi).getTime() / 1000));
+  clockProblem = "";
+  renderTimes();
+  back();
+}
+
+function renderDt() {
+  const hint = document.getElementById("dt-hint");
+  hint.textContent = dt.error || "Turn to move, press to change a field, then Save.";
+  hint.classList.toggle("error", dt.error !== "");
+  const cols = document.getElementById("dt-cols");
+  cols.replaceChildren();
+  const key = (label, onClick) => {
+    const k = document.createElement("div");
+    k.className = "key";
+    k.textContent = label;
+    k.addEventListener("click", onClick);
+    return k;
+  };
+  DT_LABELS.forEach((label, i) => {
+    const col = document.createElement("div");
+    col.className = "dtcol";
+    const name = document.createElement("div");
+    name.className = "dtlabel";
+    name.textContent = label;
+    const val = document.createElement("div");
+    val.className = `dtval ${dt.focus === i ? "focus" : ""} ${dt.focus === i && dt.editing ? "editing" : ""}`;
+    val.textContent = i === 0 ? String(dt.fields[i]) : String(dt.fields[i]).padStart(2, "0");
+    val.addEventListener("click", () => { dt.editing = dt.focus === i ? !dt.editing : true; dt.focus = i; renderNav(); });
+    col.append(name, key("+", () => { dtAdjust(i, 1); dt.focus = i; renderNav(); }), val,
+      key("\u2212", () => { dtAdjust(i, -1); dt.focus = i; renderNav(); }));
+    cols.appendChild(col);
+  });
+  document.getElementById("dt-cancel").classList.toggle("focus", dt.focus === DT_CANCEL);
+  document.getElementById("dt-save").classList.toggle("focus", dt.focus === DT_SAVE);
+}
+
+/** Remember the latest time the clock showed; a big step back while running opens the warning. */
+function heartbeat(now) {
+  if (now + 120 < store.lastSeen()) {
+    if (screen !== "clockwarn" && screen !== "datetime" && !note) runClockCheck();
+    return;
+  }
+  if (screen !== "clockwarn" && now > store.lastSeen() && now - lastBeat >= 60) {
+    lastBeat = now;
+    store.heartbeat(now);
+  }
 }
 
 // -- text prompt: note after a stop, or renaming a project ---------------------------
@@ -408,6 +531,8 @@ btnStyle.addEventListener("click", () => tap(STYLE));
 btnReports.addEventListener("click", () => tap(REPORTS));
 btnBack.addEventListener("click", () => tap(0));
 document.getElementById("overlay-back").addEventListener("click", back);
+document.getElementById("dt-cancel").addEventListener("click", back);
+document.getElementById("dt-save").addEventListener("click", dtSave);
 
 window.addEventListener("keydown", (e) => {
   if (note && e.key === "Backspace") noteBackspace();
@@ -441,7 +566,8 @@ renderTiles();
 renderTimes();
 renderNav();
 let lastSecond = store.now();
+runClockCheck();
 setInterval(() => {
   const s = store.now();
-  if (s !== lastSecond) { lastSecond = s; renderTimes(); }
+  if (s !== lastSecond) { lastSecond = s; renderTimes(); heartbeat(s); }
 }, 200);

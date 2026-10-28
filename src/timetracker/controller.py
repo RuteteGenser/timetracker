@@ -1,11 +1,13 @@
 """Glue between the database, the knob/button and the QML screens."""
 
+import calendar
 import time
 from datetime import datetime
 from typing import Callable
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 
+from .clock import ACK_REF, LAST_SEEN, ClockBackend, ClockError, check_clock, clock_reference
 from .colors import next_color
 from .db import Database, Entry
 from .model import ProjectModel
@@ -28,16 +30,24 @@ PART_TIME = 2
 
 # Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
 SCREEN_PARENT = {  # where Back goes
-    "style": "main", "settings": "main", "reports": "main",
+    "style": "main", "settings": "main", "reports": "main", "clockwarn": "main",
     "datetime": "settings", "status": "settings",
 }
-LIST_SCREENS = {"settings"}
-LIST_TITLES = {"settings": "Settings"}
+LIST_SCREENS = {"settings", "clockwarn"}
+LIST_TITLES = {"settings": "Settings", "clockwarn": "Clock check"}
+
+# Date & time screen: five fields, then Cancel and Save. The knob moves the outline over them;
+# pressing a field edits it (turn changes the value, press again to finish).
+DT_RANGES = [(2020, 2099), (1, 12), (1, 31), (0, 23), (0, 59)]  # year month day hour minute
+DT_CANCEL = 5
+DT_SAVE = 6
+HEARTBEAT_SECONDS = 60
 
 
 class Controller(QObject):
     selectedChanged = Signal()
     listChanged = Signal()
+    dtChanged = Signal()
     viewOffsetChanged = Signal()
     screenChanged = Signal()
     projectCountChanged = Signal()
@@ -52,6 +62,16 @@ class Controller(QObject):
         self._screen = "main"  # a key of SCREEN_PARENT, or "main"
         self._list = ListNav()
         self._list_rows: list[dict] = []  # rows of the current list screen: {id, label, value}
+        self._backend = clock if isinstance(clock, ClockBackend) else None  # None: the clock cannot be set
+        self._clock_problem = ""  # message of the clock warning being shown
+        self._return_to: str | None = None  # where Back from Date & time goes, if not Settings
+        self._dt_initial = [2026, 1, 1, 0, 0]
+        self._dt_fields = list(self._dt_initial)
+        self._dt_focus = 0
+        self._dt_editing = False
+        self._dt_error = ""
+        self._last_seen = int(db.get_meta(LAST_SEEN) or 0)
+        self._last_beat = 0
         self._last_second = -1
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
@@ -108,6 +128,26 @@ class Controller(QObject):
     @Property(int, notify=listChanged)
     def listOffset(self):
         return self._list.offset
+
+    @Property(str, notify=screenChanged)
+    def listNote(self):
+        return self._clock_problem if self._screen == "clockwarn" else ""
+
+    @Property("QVariantList", notify=dtChanged)
+    def dtFields(self):
+        return self._dt_fields
+
+    @Property(int, notify=dtChanged)
+    def dtFocus(self):
+        return self._dt_focus
+
+    @Property(bool, notify=dtChanged)
+    def dtEditing(self):
+        return self._dt_editing
+
+    @Property(str, notify=dtChanged)
+    def dtError(self):
+        return self._dt_error
 
     @Property(bool, notify=resetArmedChanged)
     def resetArmed(self):
@@ -180,8 +220,10 @@ class Controller(QObject):
         )
 
     def _on_tick(self) -> None:
-        if int(self._clock()) != self._last_second:
+        now = int(self._clock())
+        if now != self._last_second:
             self._refresh_times()
+            self._heartbeat(now)
 
     # -- navigation -------------------------------------------------------------
 
@@ -207,7 +249,7 @@ class Controller(QObject):
         """Show a screen; list screens get fresh rows and selection."""
         if screen in LIST_SCREENS:
             self._list_rows = self._rows_for(screen)
-            self._list = ListNav(len(self._list_rows))
+            self._list = ListNav(len(self._list_rows), default=0 if screen == "clockwarn" else None)
             self.listChanged.emit()
         self._set_screen(screen)
 
@@ -222,6 +264,8 @@ class Controller(QObject):
                 row("datetime", "Date & time", now.strftime("%d %b %Y  %H:%M")),
                 row("status", "Status"),
             ]
+        if screen == "clockwarn":
+            return [row("datetime", "Set date and time"), row("ignore", "Ignore")]
         return []
 
     def _activate_list(self, index: int) -> None:
@@ -230,6 +274,10 @@ class Controller(QObject):
         row_id = self._list_rows[index]["id"]
         if row_id == "back":
             self.back()
+        elif row_id == "ignore":
+            self._ignore_clock_problem()
+        elif row_id == "datetime":
+            self._open_datetime(return_to="main" if self._screen == "clockwarn" else None)
         else:
             self._open_screen(row_id)
 
@@ -249,6 +297,13 @@ class Controller(QObject):
             self._list.move(steps)
             self.listChanged.emit()
             return
+        if self._screen == "datetime":
+            if self._dt_editing:
+                self._dt_adjust(self._dt_focus, steps)
+            else:
+                self._dt_focus = max(0, min(DT_SAVE, self._dt_focus + steps))
+            self.dtChanged.emit()
+            return
         if self._screen not in ("main", "style"):
             return
         before = (self._nav.selected, self._nav.offset)
@@ -262,6 +317,8 @@ class Controller(QObject):
             {NOTE_DELETE: self.noteDelete, NOTE_SKIP: self.noteSkip, NOTE_SAVE: self.noteSave}[self._note_focus]()
         elif self._screen in LIST_SCREENS:
             self._activate_list(self._list.selected)
+        elif self._screen == "datetime":
+            self._dt_press()
         elif self._screen not in ("main", "style"):
             self.back()  # placeholder screens: any press goes back
         else:
@@ -287,7 +344,8 @@ class Controller(QObject):
     @Slot()
     def back(self) -> None:
         """Go up one level; the main screen comes back in its default view."""
-        parent = SCREEN_PARENT.get(self._screen, "main")
+        parent = self._return_to or SCREEN_PARENT.get(self._screen, "main")
+        self._return_to = None
         if parent == "main":
             self._use_nav(StripNav(self._nav.project_count))
             self._set_screen("main")
@@ -434,3 +492,112 @@ class Controller(QObject):
         self._db.delete_entry(self._note_entry.id)
         self._close_note()
         self._refresh_times()
+
+    # -- clock: sanity check and the Date & time screen -------------------------------------
+
+    def _heartbeat(self, now: int) -> None:
+        """Remember the latest time the clock showed, so a later jump backwards can be noticed.
+
+        It only moves forward (setting the clock by hand resets it itself); a clock that has
+        gone back must not drag the reference back with it. A big step back while running
+        opens the warning straight away.
+        """
+        if now + 120 < self._last_seen:
+            if self._screen not in ("clockwarn", "datetime") and not self._prompt_open():
+                self.run_clock_check()
+            return
+        if self._screen != "clockwarn" and now > self._last_seen and now - self._last_beat >= HEARTBEAT_SECONDS:
+            self._last_beat = now
+            self._last_seen = now
+            self._db.set_meta(LAST_SEEN, str(now))
+
+    @Slot()
+    def run_clock_check(self) -> None:
+        """Warn when the clock looks wrong (called once at start, and when it jumps back)."""
+        problem = check_clock(self._db, int(self._clock()))
+        if problem:
+            self._clock_problem = problem
+            self._open_screen("clockwarn")
+
+    def _ignore_clock_problem(self) -> None:
+        """Dismiss the warning: it will not come back until the clock reference moves on."""
+        self._db.set_meta(ACK_REF, str(clock_reference(self._db)))
+        self._last_seen = int(self._clock())
+        self._db.set_meta(LAST_SEEN, str(self._last_seen))
+        self._clock_problem = ""
+        self.back()
+
+    def _open_datetime(self, return_to: str | None = None) -> None:
+        now = datetime.fromtimestamp(self._clock())
+        self._dt_initial = [now.year, now.month, now.day, now.hour, now.minute]
+        self._dt_fields = list(self._dt_initial)
+        self._dt_focus = 0
+        self._dt_editing = False
+        self._dt_error = ""
+        self._return_to = return_to
+        self.dtChanged.emit()
+        self._set_screen("datetime")
+
+    def _dt_adjust(self, field: int, delta: int) -> None:
+        year, month, day, hour, minute = self._dt_fields
+        if field == 0:
+            year = max(DT_RANGES[0][0], min(DT_RANGES[0][1], year + delta))
+        elif field == 1:
+            month = (month - 1 + delta) % 12 + 1
+        elif field == 2:
+            days = calendar.monthrange(year, month)[1]
+            day = (day - 1 + delta) % days + 1
+        elif field == 3:
+            hour = (hour + delta) % 24
+        else:
+            minute = (minute + delta) % 60
+        day = min(day, calendar.monthrange(year, month)[1])  # 31 Jan -> Feb becomes 28/29
+        self._dt_fields = [year, month, day, hour, minute]
+        self._dt_error = ""
+
+    def _dt_press(self) -> None:
+        if self._dt_focus < DT_CANCEL:
+            self._dt_editing = not self._dt_editing
+            self.dtChanged.emit()
+        elif self._dt_focus == DT_CANCEL:
+            self.back()
+        else:
+            self.dtSave()
+
+    @Slot(int)
+    def dtTap(self, field: int) -> None:
+        """Touch: tap a field to select it (and start or stop editing it)."""
+        if self._screen == "datetime" and 0 <= field < DT_CANCEL:
+            self._dt_editing = not self._dt_editing if self._dt_focus == field else True
+            self._dt_focus = field
+            self.dtChanged.emit()
+
+    @Slot(int, int)
+    def dtAdjust(self, field: int, delta: int) -> None:
+        """Touch: the + and - buttons above and below a field."""
+        if self._screen == "datetime" and 0 <= field < DT_CANCEL:
+            self._dt_adjust(field, delta)
+            self._dt_focus = field
+            self.dtChanged.emit()
+
+    @Slot()
+    def dtSave(self) -> None:
+        """Set the clock to the chosen date and time. A running timer keeps its elapsed time."""
+        if self._dt_fields == self._dt_initial:
+            self.back()
+            return
+        year, month, day, hour, minute = self._dt_fields
+        if self._backend is None:
+            self._dt_error = "This clock cannot be set."
+            self.dtChanged.emit()
+            return
+        try:
+            self._backend.set_time(self._db, int(datetime(year, month, day, hour, minute).timestamp()))
+        except ClockError as exc:
+            self._dt_error = str(exc)
+            self.dtChanged.emit()
+            return
+        self._last_seen = int(self._clock())
+        self._clock_problem = ""
+        self._refresh_times()
+        self.back()

@@ -145,13 +145,15 @@ def test_settings_rows_open_screens_and_back_goes_up_one_level(ui):
     key(window, Qt.Key.Key_Space)          # Settings list
     key(window, Qt.Key.Key_Space)          # Date & time
     assert ctl.screen == "datetime" and not ctl.screenIsList
-    key(window, Qt.Key.Key_Space)          # placeholder: any press goes back
+    ctl.back()
     assert ctl.screen == "settings" and ctl.listSelected == 1
     key(window, Qt.Key.Key_Right)
     key(window, Qt.Key.Key_Right)          # clamps at the last row
     assert ctl.listSelected == 2
     key(window, Qt.Key.Key_Space)
     assert ctl.screen == "status"
+    key(window, Qt.Key.Key_Space)          # placeholder: any press goes back
+    assert ctl.screen == "settings"
 
 
 def test_reports_button_opens_reports(ui):
@@ -369,3 +371,162 @@ def test_style_tapping_parts(ui):
     assert color_of(ctl, 1) != before and ctl.selectedCard == 1 and ctl.selectedPart == 0
     ctl.tap(1 + 3 * 1 + 1)                       # card 2, name part
     assert ctl.noteKind == "rename" and ctl.noteText == "Admin"
+
+
+# -- Date & time and the clock check ----------------------------------------------------------
+
+from datetime import datetime as _dt
+
+
+def open_datetime(window):
+    for _ in range(3):
+        key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)          # Settings
+    key(window, Qt.Key.Key_Space)          # Date & time
+
+
+def local(ts):
+    d = _dt.fromtimestamp(ts)
+    return [d.year, d.month, d.day, d.hour, d.minute]
+
+
+def test_datetime_shows_the_current_time_and_nothing_is_changed_by_cancel(ui, clock):
+    ctl, window, _ = ui
+    open_datetime(window)
+    assert list(ctl.dtFields) == local(clock())
+    assert ctl.dtFocus == 0 and not ctl.dtEditing
+    before = clock()
+    for _ in range(5):
+        key(window, Qt.Key.Key_Right)      # to Cancel
+    assert ctl.dtFocus == 5
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "settings" and clock() == before
+
+
+def test_datetime_knob_edits_a_field_and_save_sets_the_clock(ui, clock):
+    ctl, window, db = ui
+    open_datetime(window)
+    for _ in range(3):
+        key(window, Qt.Key.Key_Right)      # Hour
+    assert ctl.dtFocus == 3
+    key(window, Qt.Key.Key_Space)          # start editing
+    assert ctl.dtEditing
+    before = list(ctl.dtFields)
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Right)
+    assert ctl.dtFields[3] == (before[3] + 2) % 24
+    key(window, Qt.Key.Key_Space)          # stop editing
+    assert not ctl.dtEditing
+    for _ in range(3):
+        key(window, Qt.Key.Key_Right)      # Minute, Cancel, Save
+    assert ctl.dtFocus == 6
+    edited = list(ctl.dtFields)
+    key(window, Qt.Key.Key_Space)          # Save
+    assert ctl.screen == "settings"
+    assert clock() == int(_dt(*edited).timestamp())      # the clock now shows exactly what was chosen
+
+
+def test_saving_the_time_keeps_a_running_timer_elapsed_time(ui, clock):
+    ctl, window, db = ui
+    key(window, Qt.Key.Key_Space)          # start Work
+    clock.advance(300)
+    elapsed = clock() - db.running().start_ts
+    open_datetime(window)
+    ctl.dtAdjust(2, 1)                     # a day later
+    ctl.dtSave()
+    assert clock() - db.running().start_ts == elapsed
+    assert ctl.screen == "settings"
+
+
+def test_datetime_day_is_clamped_when_the_month_changes(ui):
+    ctl, window, _ = ui
+    open_datetime(window)
+    ctl._dt_fields = [2026, 1, 31, 10, 0]
+    ctl.dtAdjust(1, 1)                     # month -> February
+    assert ctl.dtFields[1] == 2 and ctl.dtFields[2] == 28
+    ctl._dt_fields = [2027, 12, 15, 23, 59]
+    ctl.dtAdjust(4, 1)
+    assert ctl.dtFields[4] == 0            # minute wraps
+    ctl.dtAdjust(3, 1)
+    assert ctl.dtFields[3] == 0            # hour wraps
+    ctl._dt_fields = [2099, 1, 1, 0, 0]
+    ctl.dtAdjust(0, 5)
+    assert ctl.dtFields[0] == 2099         # year stops at the end of its range
+
+
+def test_saving_without_changes_does_not_touch_the_clock(ui, clock):
+    ctl, window, db = ui
+    open_datetime(window)
+    old_meta = db.get_meta("last_clock_change")
+    ctl.dtSave()
+    assert ctl.screen == "settings" and db.get_meta("last_clock_change") == old_meta
+
+
+def test_a_clock_that_cannot_be_set_shows_an_error_and_stays(ui, clock, monkeypatch):
+    from timetracker.clock import ClockError
+    ctl, window, db = ui
+
+    def boom(db_, ts):
+        raise ClockError("no helper installed")
+    monkeypatch.setattr(clock, "set_time", boom)
+    open_datetime(window)
+    ctl.dtAdjust(2, 1)
+    ctl.dtSave()
+    assert ctl.screen == "datetime" and ctl.dtError == "no helper installed"
+
+
+def test_touch_tap_on_a_field_starts_editing(ui):
+    ctl, window, _ = ui
+    open_datetime(window)
+    ctl.dtTap(3)
+    assert ctl.dtFocus == 3 and ctl.dtEditing
+    ctl.dtTap(3)
+    assert not ctl.dtEditing
+
+
+def test_boot_check_warns_when_the_clock_is_behind_and_ignore_dismisses(ui, clock, db):
+    ctl, window, _ = ui
+    db.set_meta("last_seen", str(clock() + 5 * 3600))
+    ctl.run_clock_check()
+    assert ctl.screen == "clockwarn" and ctl.screenIsList
+    assert "behind" in ctl.listNote
+    assert [r["id"] for r in ctl.listRows] == ["datetime", "ignore"]
+    assert ctl.listSelected == 0           # Set date and time is outlined first
+    key(window, Qt.Key.Key_Right)          # Ignore
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "main" and ctl.selected == 3
+    ctl.run_clock_check()                  # dismissed: it does not come back
+    assert ctl.screen == "main"
+
+
+def test_boot_check_set_time_returns_to_the_main_screen_afterwards(ui, clock, db):
+    ctl, window, _ = ui
+    db.set_meta("last_seen", str(clock() + 5 * 3600))
+    ctl.run_clock_check()
+    key(window, Qt.Key.Key_Space)          # Set date and time
+    assert ctl.screen == "datetime"
+    ctl.dtAdjust(3, 5)
+    ctl.dtSave()
+    assert ctl.screen == "main"
+    ctl.run_clock_check()
+    assert ctl.screen == "main"            # the heartbeat was reset to the new time
+
+
+def test_boot_check_is_silent_with_a_sane_clock(ui):
+    ctl, _, _ = ui
+    ctl.run_clock_check()
+    assert ctl.screen == "main"
+
+
+def test_heartbeat_moves_forward_only_and_a_jump_back_while_running_warns(ui, clock, db):
+    ctl, _, _ = ui
+    ctl._heartbeat(clock())
+    assert db.get_meta("last_seen") == str(clock())
+    clock.advance(120)
+    ctl._heartbeat(clock())
+    assert db.get_meta("last_seen") == str(clock())
+    seen = clock()
+    clock.advance(-3600)                   # the clock jumps back an hour
+    ctl._heartbeat(clock())
+    assert db.get_meta("last_seen") == str(seen)   # the reference was not dragged back
+    assert ctl.screen == "clockwarn" and "behind" in ctl.listNote

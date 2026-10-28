@@ -1,14 +1,20 @@
 import pytest
 
+from timetracker.clock import ClockBackend
 from timetracker.db import Database
 
 
-class FakeClock:
-    def __init__(self, t=1_700_000_000):
+class FakeClock(ClockBackend):
+    """A clock the test controls; it can also be 'set' like the real ones (after 2026, so it looks sane)."""
+
+    def __init__(self, t=1_800_000_000):
         self.t = t
 
-    def __call__(self):
+    def now(self):
         return self.t
+
+    def _set(self, new_ts):
+        self.t = new_ts
 
     def advance(self, seconds):
         self.t += seconds

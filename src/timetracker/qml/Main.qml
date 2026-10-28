@@ -109,11 +109,16 @@ Window {
         visible: ctl.screenIsList
     }
 
+    DateTimeScreen {
+        anchors.fill: parent
+        visible: ctl.screen === "datetime"
+    }
+
     Loader {   // screens that are not built yet
         anchors.fill: parent
-        active: ctl.screen !== "main" && ctl.screen !== "style" && !ctl.screenIsList
+        active: ctl.screen !== "main" && ctl.screen !== "style" && ctl.screen !== "datetime" && !ctl.screenIsList
         sourceComponent: Placeholder {
-            title: ctl.screen === "reports" ? "Reports" : (ctl.screen === "datetime" ? "Date & time" : "Status")
+            title: ctl.screen === "reports" ? "Reports" : "Status"
             note: "Coming soon. Press the button to go back."
         }
     }

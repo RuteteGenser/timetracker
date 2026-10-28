@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 
+from .clock import OffsetClock, make_clock
 from .colors import COLOR_CYCLE
 from .config import load_config
 from .controller import Controller
@@ -46,9 +47,13 @@ def main(argv: list[str] | None = None) -> int:
     if cfg.hide_cursor:
         app.setOverrideCursor(Qt.CursorShape.BlankCursor)
 
-    db = Database(Path(cfg.db_path).expanduser())
+    clock = make_clock(cfg.clock_driver)
+    db = Database(Path(cfg.db_path).expanduser(), clock=clock)
+    if isinstance(clock, OffsetClock):
+        clock.bind(db)  # picks up the offset saved by an earlier "set date and time"
     seed_starter_projects(db)
-    controller = Controller(db)
+    controller = Controller(db, clock=clock)
+    controller.run_clock_check()  # opens the warning screen if the clock looks wrong
 
     knob = make_input(cfg, app)
     knob.turned.connect(controller.turn)
