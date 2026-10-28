@@ -50,7 +50,7 @@ def key(window, k):
 
 def test_boot_state_selects_first_project(ui):
     ctl, _, db = ui
-    assert ctl.selected == 2
+    assert ctl.selected == 3                # Settings, Style, Reports, then the first card
     assert ctl.viewOffset == 0
     assert db.running() is None
 
@@ -62,7 +62,7 @@ def test_arrows_and_space_start_and_stop(ui):
     assert first is not None
     for _ in range(4):
         key(window, Qt.Key.Key_Right)
-    assert ctl.selected == 6 and ctl.viewOffset == 2
+    assert ctl.selected == 7 and ctl.viewOffset == 2
     key(window, Qt.Key.Key_Space)  # starting another project stops the first
     assert db.running().project_id != first.project_id
     assert db.get_entry(first.id).end_ts is not None
@@ -107,7 +107,7 @@ def test_note_prompt_blocks_the_strip(ui):
     key(window, Qt.Key.Key_Space)
     key(window, Qt.Key.Key_Space)
     selected = ctl.selected
-    ctl.tap(5)                             # tapping a tile behind the prompt does nothing
+    ctl.tap(6)                             # tapping a tile behind the prompt does nothing
     assert db.running() is None and ctl.selected == selected
 
 
@@ -120,23 +120,66 @@ def test_todays_total_grows_after_stop(ui, clock):
     assert ctl.projects.data(ctl.projects.index(0), ctl.projects.TodayRole) == 42
 
 
-def test_left_reaches_style_then_settings_and_back(ui):
+def test_left_reaches_reports_style_settings_then_settings_list_and_back(ui):
     ctl, window, _ = ui
     key(window, Qt.Key.Key_Left)
-    assert ctl.selected == 1
+    assert ctl.selected == 2               # Reports
     key(window, Qt.Key.Key_Left)
-    assert ctl.selected == 0
+    assert ctl.selected == 1               # Style
+    key(window, Qt.Key.Key_Left)
+    assert ctl.selected == 0               # Settings
     key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "settings" and ctl.screenIsList
+    assert [r["id"] for r in ctl.listRows] == ["back", "datetime", "status"]
+    assert ctl.listSelected == 1           # the first real row, Back is one step left
+    key(window, Qt.Key.Key_Left)
+    assert ctl.listSelected == 0
+    key(window, Qt.Key.Key_Space)          # Back
+    assert ctl.screen == "main" and ctl.selected == 3 and ctl.viewOffset == 0
+
+
+def test_settings_rows_open_screens_and_back_goes_up_one_level(ui):
+    ctl, window, _ = ui
+    for _ in range(3):
+        key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)          # Settings list
+    key(window, Qt.Key.Key_Space)          # Date & time
+    assert ctl.screen == "datetime" and not ctl.screenIsList
+    key(window, Qt.Key.Key_Space)          # placeholder: any press goes back
+    assert ctl.screen == "settings" and ctl.listSelected == 1
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Right)          # clamps at the last row
+    assert ctl.listSelected == 2
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "status"
+
+
+def test_reports_button_opens_reports(ui):
+    ctl, window, _ = ui
+    key(window, Qt.Key.Key_Left)
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "reports"
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "main"
+
+
+def test_tapping_list_rows(ui):
+    ctl, _, _ = ui
+    ctl.tap(0)                             # Settings
     assert ctl.screen == "settings"
-    key(window, Qt.Key.Key_Space)  # button returns to the main screen's default view
-    assert ctl.screen == "main" and ctl.selected == 2 and ctl.viewOffset == 0
+    ctl.tap(1)                             # Date & time row
+    assert ctl.screen == "datetime"
+    ctl.back()
+    assert ctl.screen == "settings"
+    ctl.tap(0)                             # Back row
+    assert ctl.screen == "main"
 
 
 def test_tap_starts_project(ui):
     ctl, _, db = ui
-    ctl.tap(4)
+    ctl.tap(5)
     assert db.running().project_id == ctl.projects.project_id(2)
-    assert ctl.selected == 4
+    assert ctl.selected == 5
 
 
 def test_delete_needs_two_presses(ui, clock):
@@ -199,6 +242,7 @@ def test_delete_from_switch_prompt_keeps_the_new_timer(ui, clock):
 # -- Style screen ----------------------------------------------------------------------------
 
 def enter_style(window):
+    key(window, Qt.Key.Key_Left)       # Reports
     key(window, Qt.Key.Key_Left)       # Style
     key(window, Qt.Key.Key_Space)
 
@@ -313,7 +357,7 @@ def test_style_back_button_returns_to_the_default_main_view(ui):
     key(window, Qt.Key.Key_Left)                 # first part -> Back
     assert ctl.selected == 0 and ctl.selectedCard == -1
     key(window, Qt.Key.Key_Space)
-    assert ctl.screen == "main" and ctl.selected == 2 and ctl.viewOffset == 0
+    assert ctl.screen == "main" and ctl.selected == 3 and ctl.viewOffset == 0
 
 
 def test_style_tapping_parts(ui):

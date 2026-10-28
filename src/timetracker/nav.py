@@ -1,8 +1,8 @@
 """Selection and scrolling logic of the main strip (no Qt, easy to test).
 
-Linear item order, left to right: Settings, Style, project 1, project 2, ...
-Settings and Style are stacked in one column on screen; the knob steps through
-them as two separate items. The Style screen uses the same strip with different
+Linear item order, left to right: Settings, Style, Reports, project 1, project 2, ...
+Settings, Style and Reports are stacked in one column on screen; the knob steps
+through them as three separate items. The Style screen uses the same strip with different
 items (see StripNav).
 
 The screen is split into equal slots: slot 0 is the Settings/Style column,
@@ -11,7 +11,8 @@ slot k is project k. Five slots are visible; `offset` is the first visible slot.
 
 SETTINGS = 0
 STYLE = 1
-FIRST_PROJECT = 2
+REPORTS = 2
+FIRST_PROJECT = 3
 VISIBLE_SLOTS = 5
 SCROLL_AT = 3  # selecting the 4th visible slot starts scrolling (a card is always visible ahead)
 
@@ -19,11 +20,11 @@ SCROLL_AT = 3  # selecting the 4th visible slot starts scrolling (a card is alwa
 class StripNav:
     """Selection over [column items..., then `parts` items per project card].
 
-    Main screen: two column items (Settings, Style), one item per card.
+    Main screen: three column items (Settings, Style, Reports), one item per card.
     Style screen: one column item (Back), three items per card (colour, name, time).
     """
 
-    def __init__(self, project_count: int = 0, column_items: int = 2, parts: int = 1):
+    def __init__(self, project_count: int = 0, column_items: int = FIRST_PROJECT, parts: int = 1):
         self.project_count = project_count
         self.column_items = column_items
         self.parts = parts
@@ -83,3 +84,43 @@ class StripNav:
             offset = slot - SCROLL_AT + 1
         last_offset = max(0, self.project_count + 1 - VISIBLE_SLOTS)
         self.offset = max(0, min(offset, last_offset))
+
+
+class ListNav:
+    """Selection in a vertical list of rows (Settings, Reports, ...): a window of `visible`
+    rows follows the selection. Row 0 is normally Back, so turning counter-clockwise from the
+    first real row reaches it."""
+
+    def __init__(self, count: int = 0, visible: int = 6):
+        self.count = count
+        self.visible = visible
+        self.selected = self._default()
+        self.offset = 0  # first visible row
+
+    def _default(self) -> int:
+        return 1 if self.count > 1 else 0  # the first real row, not Back
+
+    def reset(self) -> None:
+        self.selected = self._default()
+        self.offset = 0
+
+    def move(self, steps: int) -> bool:
+        return self.select(self.selected + steps)
+
+    def select(self, index: int) -> bool:
+        """Select a row, clamped to the ends. Returns True if anything changed."""
+        before = (self.selected, self.offset)
+        self.selected = max(0, min(self.count - 1, index)) if self.count else 0
+        self._follow()
+        return (self.selected, self.offset) != before
+
+    def set_count(self, count: int) -> None:
+        self.count = count
+        self.select(self.selected)
+
+    def _follow(self) -> None:
+        if self.selected < self.offset:
+            self.offset = self.selected
+        elif self.selected >= self.offset + self.visible:
+            self.offset = self.selected - self.visible + 1
+        self.offset = max(0, min(self.offset, max(0, self.count - self.visible)))

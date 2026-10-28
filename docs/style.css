@@ -33,7 +33,7 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 /* Style screen: the same strip, but every card is split into colour, name and time. */
 #btn-back { display: none; }
 .tile .parts { display: none; }
-#stage.style-mode #btn-settings, #stage.style-mode #btn-style { display: none; }
+#stage.style-mode #btn-settings, #stage.style-mode #btn-style, #stage.style-mode #btn-reports { display: none; }
 #stage.style-mode #btn-back { display: flex; }
 #stage.style-mode .tile, #stage.style-mode .tile.running { background: none; }
 #stage.style-mode .tile > :not(.parts) { display: none; }
@@ -84,3 +84,14 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 .key.armed { background: #8b1a1f; }  /* Delete after its first press: dark red */
 .key.grow { flex: 1 1 auto; }
 .key.focus::before { content: ""; position: absolute; inset: 0; border: 4px solid #fff; border-radius: 4px; pointer-events: none; }
+
+/* List screens (Settings, ...): big rows, the knob scrolls, the button opens the outlined one */
+#list { position: absolute; inset: 0; background: #101216; display: none; }
+#list.on { display: block; }
+#list h1 { position: absolute; left: 23px; top: 15px; margin: 0; height: 60px; line-height: 60px; font-size: 40px; }
+#list-rows { position: absolute; left: 15px; right: 15px; top: 85px; bottom: 15px; padding: 8px; display: flex;
+  flex-direction: column; gap: 12px; }
+.lrow { position: relative; flex: none; height: 84px; border-radius: 20px; background: #1f232b; padding: 0 28px;
+  display: flex; align-items: center; justify-content: space-between; font-size: 34px; font-weight: 700; cursor: pointer; }
+.lrow.back { background: #2a2f39; }
+.lrow .value { font-size: 30px; font-weight: 400; color: #aab2bf; }

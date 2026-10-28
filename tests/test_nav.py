@@ -1,4 +1,4 @@
-from timetracker.nav import FIRST_PROJECT, SETTINGS, STYLE, StripNav
+from timetracker.nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
 
 
 def nav(n=7):
@@ -37,8 +37,10 @@ def test_stops_at_last_project():
     assert n.selected == FIRST_PROJECT + 4
 
 
-def test_counter_clockwise_reaches_style_then_settings():
+def test_counter_clockwise_reaches_reports_then_style_then_settings():
     n = nav()
+    n.move(-1)
+    assert n.selected == REPORTS
     n.move(-1)
     assert n.selected == STYLE
     n.move(-1)
@@ -52,7 +54,7 @@ def test_scrolling_back_brings_the_column_back():
     for _ in range(6):
         n.move(1)
     assert n.offset == 3
-    while n.selected > STYLE:
+    while n.selected > SETTINGS:
         n.move(-1)
     assert n.offset == 0
 
@@ -83,7 +85,7 @@ def test_no_projects():
     n = StripNav(0)
     assert n.selected == SETTINGS
     n.move(5)
-    assert n.selected == STYLE
+    assert n.selected == REPORTS
 
 
 def test_project_count_shrinks():
@@ -164,3 +166,52 @@ def test_main_nav_card_and_part():
     assert n.card_and_part() == (0, 0)
     n.move(-1)
     assert n.card_and_part() == (-1, -1)
+
+
+# -- list screens ---------------------------------------------------------------------------
+
+def test_list_default_is_the_first_real_row_not_back():
+    n = ListNav(4)
+    assert n.selected == 1
+    assert ListNav(1).selected == 0 and ListNav(0).selected == 0
+
+
+def test_list_turn_left_reaches_back_and_stops():
+    n = ListNav(4)
+    n.move(-1)
+    assert n.selected == 0
+    n.move(-1)
+    assert n.selected == 0
+
+
+def test_list_stops_at_the_last_row():
+    n = ListNav(4)
+    for _ in range(10):
+        n.move(1)
+    assert n.selected == 3
+
+
+def test_list_window_follows_the_selection():
+    n = ListNav(12, visible=5)
+    for _ in range(11):
+        n.move(1)
+    assert n.selected == 11 and n.offset == 7
+    for _ in range(11):
+        n.move(-1)
+    assert n.selected == 0 and n.offset == 0
+
+
+def test_list_selection_is_always_visible():
+    for count in range(0, 15):
+        n = ListNav(count, visible=4)
+        for step in [1] * (count + 2) + [-1] * (count + 2):
+            n.move(step)
+            assert n.offset <= n.selected < n.offset + 4 or count == 0
+
+
+def test_list_set_count_clamps():
+    n = ListNav(10, visible=4)
+    for _ in range(9):
+        n.move(1)
+    n.set_count(3)
+    assert n.selected == 2 and n.offset == 0

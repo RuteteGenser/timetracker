@@ -1,6 +1,6 @@
 // Selection and scrolling logic of the strip. Mirrors src/timetracker/nav.py; keep the two in sync.
 //
-// Main screen items, left to right: Settings, Style, project 1, project 2, ...
+// Main screen items, left to right: Settings, Style, Reports, project 1, project 2, ...
 // The screen is split into equal slots: slot 0 is the column, slot k is project k.
 // Five slots are visible; `offset` is the first visible slot.
 //
@@ -9,12 +9,13 @@
 
 export const SETTINGS = 0;
 export const STYLE = 1;
-export const FIRST_PROJECT = 2;
+export const REPORTS = 2;
+export const FIRST_PROJECT = 3;
 export const VISIBLE_SLOTS = 5;
 export const SCROLL_AT = 3; // selecting the 4th visible slot starts scrolling
 
 export class StripNav {
-  constructor(projectCount = 0, columnItems = 2, parts = 1) {
+  constructor(projectCount = 0, columnItems = FIRST_PROJECT, parts = 1) {
     this.projectCount = projectCount;
     this.columnItems = columnItems;
     this.parts = parts;
@@ -76,5 +77,49 @@ export class StripNav {
     else if (slot - offset >= SCROLL_AT) offset = slot - SCROLL_AT + 1;
     const lastOffset = Math.max(0, this.projectCount + 1 - VISIBLE_SLOTS);
     this.offset = Math.max(0, Math.min(offset, lastOffset));
+  }
+}
+
+/**
+ * Selection in a vertical list of rows (Settings, ...): a window of `visible` rows follows the
+ * selection. Row 0 is normally Back, so turning left from the first real row reaches it.
+ */
+export class ListNav {
+  constructor(count = 0, visible = 6) {
+    this.count = count;
+    this.visible = visible;
+    this.selected = this.#default();
+    this.offset = 0; // first visible row
+  }
+
+  #default() {
+    return this.count > 1 ? 1 : 0; // the first real row, not Back
+  }
+
+  reset() {
+    this.selected = this.#default();
+    this.offset = 0;
+  }
+
+  move(steps) {
+    return this.select(this.selected + steps);
+  }
+
+  select(index) {
+    const before = [this.selected, this.offset];
+    this.selected = this.count ? Math.max(0, Math.min(this.count - 1, index)) : 0;
+    this.#follow();
+    return this.selected !== before[0] || this.offset !== before[1];
+  }
+
+  setCount(count) {
+    this.count = count;
+    this.select(this.selected);
+  }
+
+  #follow() {
+    if (this.selected < this.offset) this.offset = this.selected;
+    else if (this.selected >= this.offset + this.visible) this.offset = this.selected - this.visible + 1;
+    this.offset = Math.max(0, Math.min(this.offset, Math.max(0, this.count - this.visible)));
   }
 }

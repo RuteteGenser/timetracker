@@ -20,7 +20,7 @@ Window {
     Item {
         id: mainScreen
         anchors.fill: parent
-        visible: ctl.screen !== "settings"
+        visible: ctl.screen === "main" || ctl.screen === "style"
 
         // Cards scrolled out of view are cut off at the margin, not drawn into it.
         Item {
@@ -30,7 +30,7 @@ Window {
             height: win.height - 2 * win.pad
             clip: true
 
-        // The strip: [Settings/Style column][card][card]... slides left as a whole.
+        // The strip: [Settings/Style/Reports column][card][card]... slides left as a whole.
         // View offset n = number of slots scrolled off to the left.
         Item {
             id: strip
@@ -39,19 +39,24 @@ Window {
             x: -ctl.viewOffset * win.tileW
             Behavior on x { NumberAnimation { duration: 240; easing.type: Easing.OutCubic } }
 
-            Column {   // main screen: Settings and Style
+            Column {   // main screen: Settings, Style and Reports
                 visible: ctl.screen === "main"
                 width: win.colW
                 height: parent.height
                 ColumnButton {
-                    width: parent.width; height: parent.height / 2; u: win.u
+                    width: parent.width; height: parent.height / 3; u: win.u
                     label: "Settings"; selected: ctl.selected === 0
                     onTapped: ctl.tap(0)
                 }
                 ColumnButton {
-                    width: parent.width; height: parent.height / 2; u: win.u
+                    width: parent.width; height: parent.height / 3; u: win.u
                     label: "Style"; selected: ctl.selected === 1
                     onTapped: ctl.tap(1)
+                }
+                ColumnButton {
+                    width: parent.width; height: parent.height / 3; u: win.u
+                    label: "Reports"; selected: ctl.selected === 2
+                    onTapped: ctl.tap(2)
                 }
             }
 
@@ -75,7 +80,7 @@ Window {
                     elapsed: model.elapsed
                     running: model.running
                     selected: ctl.selectedCard === index
-                    onTapped: ctl.tap(index + 2)
+                    onTapped: ctl.tap(ctl.firstItem + index)
                 }
             }
 
@@ -99,12 +104,17 @@ Window {
         }
     }
 
-    Loader {
+    ListScreen {
         anchors.fill: parent
-        active: ctl.screen === "settings"
+        visible: ctl.screenIsList
+    }
+
+    Loader {   // screens that are not built yet
+        anchors.fill: parent
+        active: ctl.screen !== "main" && ctl.screen !== "style" && !ctl.screenIsList
         sourceComponent: Placeholder {
-            title: "Settings"
-            note: "Coming in a later milestone. Press the button to go back."
+            title: ctl.screen === "reports" ? "Reports" : (ctl.screen === "datetime" ? "Date & time" : "Status")
+            note: "Coming soon. Press the button to go back."
         }
     }
 

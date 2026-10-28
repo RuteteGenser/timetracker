@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { StripNav, FIRST_PROJECT, SETTINGS, STYLE } from "../../docs/nav.js";
+import { StripNav, ListNav, FIRST_PROJECT, SETTINGS, STYLE, REPORTS } from "../../docs/nav.js";
 import { Store, dayBounds } from "../../docs/store.js";
 
 const memory = () => {
@@ -28,8 +28,9 @@ test("clockwise keeps scrolling one card per step until the end", () => {
   assert.deepEqual(seen, [[1, 0], [2, 1], [3, 2], [4, 3], [5, 3], [6, 3]]);
 });
 
-test("counter-clockwise reaches Style then Settings, no wrap", () => {
+test("counter-clockwise reaches Reports, Style then Settings, no wrap", () => {
   const n = new StripNav(7);
+  n.move(-1); assert.equal(n.selected, REPORTS);
   n.move(-1); assert.equal(n.selected, STYLE);
   n.move(-1); assert.equal(n.selected, SETTINGS);
   n.move(-1); assert.equal(n.selected, SETTINGS);
@@ -38,7 +39,7 @@ test("counter-clockwise reaches Style then Settings, no wrap", () => {
 test("scrolling back brings the column back", () => {
   const n = new StripNav(7);
   for (let i = 0; i < 6; i++) n.move(1);
-  while (n.selected > STYLE) n.move(-1);
+  while (n.selected > SETTINGS) n.move(-1);
   assert.equal(n.offset, 0);
 });
 
@@ -266,4 +267,45 @@ test("resetToday on a timer started yesterday keeps yesterday's part", () => {
   assert.deepEqual(s.totals(dayStart - DAY, dayStart), { [a.id]: 900 });
   assert.equal(s.running().start, state.t);
   assert.equal(s.totals(dayStart, dayEnd)[a.id] ?? 0, 0);
+});
+
+
+// -- list screens --------------------------------------------------------------------------
+
+test("list: default is the first real row, not Back", () => {
+  assert.equal(new ListNav(4).selected, 1);
+  assert.equal(new ListNav(1).selected, 0);
+  assert.equal(new ListNav(0).selected, 0);
+});
+
+test("list: turning left reaches Back and stops there", () => {
+  const n = new ListNav(4);
+  n.move(-1); assert.equal(n.selected, 0);
+  n.move(-1); assert.equal(n.selected, 0);
+});
+
+test("list: stops at the last row", () => {
+  const n = new ListNav(4);
+  for (let i = 0; i < 10; i++) n.move(1);
+  assert.equal(n.selected, 3);
+});
+
+test("list: the window follows the selection and the selection stays visible", () => {
+  for (let count = 1; count < 15; count++) {
+    const n = new ListNav(count, 4);
+    for (const step of [...Array(count + 2).fill(1), ...Array(count + 2).fill(-1)]) {
+      n.move(step);
+      assert.ok(n.offset <= n.selected && n.selected < n.offset + 4);
+    }
+  }
+  const n = new ListNav(12, 5);
+  for (let i = 0; i < 11; i++) n.move(1);
+  assert.deepEqual([n.selected, n.offset], [11, 7]);
+});
+
+test("list: setCount clamps", () => {
+  const n = new ListNav(10, 4);
+  for (let i = 0; i < 9; i++) n.move(1);
+  n.setCount(3);
+  assert.deepEqual([n.selected, n.offset], [2, 0]);
 });

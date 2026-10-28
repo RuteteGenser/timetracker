@@ -3,7 +3,7 @@
 // this browser's localStorage. Nothing ever leaves the browser.
 // The rules mirror src/timetracker/controller.py.
 
-import { StripNav, SETTINGS, STYLE, FIRST_PROJECT } from "./nav.js";
+import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
 import { Store, dayBounds, nextColor } from "./store.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
@@ -15,7 +15,16 @@ const PART_TIME = 2;
 const store = new Store();
 const projectCount = store.projects().length;
 let nav = new StripNav(projectCount);
-let screen = "main"; // "main", "style" or "settings"
+let screen = "main"; // a key of SCREEN_PARENT, or "main"
+// Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
+const SCREEN_PARENT = { // where Back goes
+  style: "main", settings: "main", reports: "main", datetime: "settings", status: "settings",
+};
+const LIST_SCREENS = new Set(["settings"]);
+const LIST_TITLES = { settings: "Settings" };
+const PLACEHOLDER_TITLES = { reports: "Reports", datetime: "Date & time", status: "Status" };
+let list = new ListNav(0);
+let listRows = []; // rows of the current list screen: { id, label, value }
 let resetArmed = null; // Style item whose time reset waits for its confirming second press
 
 const stage = document.getElementById("stage");
@@ -23,6 +32,7 @@ const strip = document.getElementById("strip");
 const overlay = document.getElementById("overlay");
 const btnSettings = document.getElementById("btn-settings");
 const btnStyle = document.getElementById("btn-style");
+const btnReports = document.getElementById("btn-reports");
 const btnBack = document.getElementById("btn-back");
 
 // -- build tiles --------------------------------------------------------------
@@ -111,6 +121,7 @@ function renderNav() {
   if (fittedFor !== screen) { fittedFor = screen; fitNames(); }
   btnSettings.classList.toggle("selected", screen === "main" && nav.selected === SETTINGS);
   btnStyle.classList.toggle("selected", screen === "main" && nav.selected === STYLE);
+  btnReports.classList.toggle("selected", screen === "main" && nav.selected === REPORTS);
   btnBack.classList.toggle("selected", screen === "style" && nav.selected === 0);
   tiles.forEach((t, i) => {
     t.el.classList.toggle("selected", screen === "main" && card === i);
@@ -120,10 +131,57 @@ function renderNav() {
     t.hint.textContent = armed ? "Confirm reset" : "Reset time";
   });
   strip.style.transform = `translateX(${-nav.offset * SLOT_W}px)`;
-  overlay.classList.toggle("on", screen === "settings");
+  const isList = LIST_SCREENS.has(screen);
+  document.getElementById("list").classList.toggle("on", isList);
+  overlay.classList.toggle("on", screen !== "main" && screen !== "style" && !isList);
+  document.getElementById("overlay-title").textContent = PLACEHOLDER_TITLES[screen] ?? "";
+  if (isList) renderList();
+}
+
+function renderList() {
+  document.getElementById("list-title").textContent = LIST_TITLES[screen];
+  const box = document.getElementById("list-rows");
+  box.replaceChildren();
+  listRows.slice(list.offset, list.offset + list.visible).forEach((r, i) => {
+    const index = list.offset + i;
+    const el = document.createElement("div");
+    el.className = `lrow ${r.id === "back" ? "back" : ""} ${index === list.selected ? "selected" : ""}`;
+    el.innerHTML = '<span class="label"></span><span class="value"></span>';
+    el.querySelector(".label").textContent = r.label;
+    el.querySelector(".value").textContent = r.value;
+    el.addEventListener("click", () => tap(index));
+    box.appendChild(el);
+  });
 }
 
 // -- actions ------------------------------------------------------------------
+
+function rowsFor(name) {
+  const row = (id, label, value = "") => ({ id, label, value });
+  if (name === "settings") {
+    const d = new Date(store.now() * 1000);
+    const p2 = (n) => String(n).padStart(2, "0");
+    const when = `${p2(d.getDate())} ${d.toLocaleString("en", { month: "short" })} ${d.getFullYear()}  ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    return [row("back", "Back"), row("datetime", "Date & time", when), row("status", "Status")];
+  }
+  return [];
+}
+
+/** Show a screen; list screens get fresh rows and selection. */
+function openScreen(name) {
+  if (LIST_SCREENS.has(name)) {
+    listRows = rowsFor(name);
+    list = new ListNav(listRows.length);
+  }
+  screen = name;
+}
+
+function activateList(index) {
+  const r = listRows[index];
+  if (!r) return;
+  if (r.id === "back") back();
+  else openScreen(r.id);
+}
 
 function useNav(newNav) {
   nav = newNav;
@@ -139,7 +197,12 @@ function turn(steps) {
     renderNote();
     return;
   }
-  if (screen === "settings") return;
+  if (LIST_SCREENS.has(screen)) {
+    list.move(steps);
+    renderNav();
+    return;
+  }
+  if (screen !== "main" && screen !== "style") return;
   const before = nav.selected;
   nav.move(steps);
   if (nav.selected !== before) resetArmed = null; // moving away cancels a pending time reset
@@ -179,7 +242,8 @@ function activateStyle(index) {
 
 function activate(index) {
   if (screen === "style") activateStyle(index);
-  else if (index === SETTINGS) screen = "settings";
+  else if (index === SETTINGS) openScreen("settings");
+  else if (index === REPORTS) openScreen("reports");
   else if (index === STYLE) {
     useNav(new StripNav(nav.projectCount, 1, STYLE_PARTS));
     screen = "style";
@@ -191,20 +255,33 @@ function activate(index) {
   renderNav();
 }
 
-function back() {
-  useNav(new StripNav(nav.projectCount));
-  screen = "main";
+function back() { // go up one level; the main screen comes back in its default view
+  const parent = SCREEN_PARENT[screen] ?? "main";
+  if (parent === "main") {
+    useNav(new StripNav(nav.projectCount));
+    screen = "main";
+  } else {
+    openScreen(parent);
+  }
   renderNav();
 }
 
 function press() {
   if (note) [noteDelete, noteSkip, noteSave][note.focus]();
-  else if (screen === "settings") back();
+  else if (LIST_SCREENS.has(screen)) { activateList(list.selected); renderNav(); }
+  else if (screen !== "main" && screen !== "style") back(); // placeholder screens: any press goes back
   else activate(nav.selected);
 }
 
 function tap(index) {
-  if (screen === "settings" || note) return;
+  if (note) return;
+  if (LIST_SCREENS.has(screen)) {
+    list.select(index);
+    activateList(index);
+    renderNav();
+    return;
+  }
+  if (screen !== "main" && screen !== "style") return;
   const before = nav.selected;
   nav.select(index);
   if (nav.selected !== before) resetArmed = null;
@@ -328,6 +405,7 @@ function renderNote() {
 
 btnSettings.addEventListener("click", () => tap(SETTINGS));
 btnStyle.addEventListener("click", () => tap(STYLE));
+btnReports.addEventListener("click", () => tap(REPORTS));
 btnBack.addEventListener("click", () => tap(0));
 document.getElementById("overlay-back").addEventListener("click", back);
 

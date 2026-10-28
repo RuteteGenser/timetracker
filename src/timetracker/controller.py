@@ -1,6 +1,7 @@
 """Glue between the database, the knob/button and the QML screens."""
 
 import time
+from datetime import datetime
 from typing import Callable
 
 from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
@@ -8,7 +9,7 @@ from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
 from .colors import next_color
 from .db import Database, Entry
 from .model import ProjectModel
-from .nav import FIRST_PROJECT, SETTINGS, STYLE, StripNav
+from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
 from .timeutil import day_bounds
 
 # Text prompt buttons, left to right; the knob button presses the focused one.
@@ -25,8 +26,18 @@ PART_NAME = 1
 PART_TIME = 2
 
 
+# Screens: "main", "style", list screens (vertical rows, knob scrolls) and detail screens.
+SCREEN_PARENT = {  # where Back goes
+    "style": "main", "settings": "main", "reports": "main",
+    "datetime": "settings", "status": "settings",
+}
+LIST_SCREENS = {"settings"}
+LIST_TITLES = {"settings": "Settings"}
+
+
 class Controller(QObject):
     selectedChanged = Signal()
+    listChanged = Signal()
     viewOffsetChanged = Signal()
     screenChanged = Signal()
     projectCountChanged = Signal()
@@ -38,7 +49,9 @@ class Controller(QObject):
         self._db = db
         self._clock = clock
         self._nav = StripNav()
-        self._screen = "main"  # "main", "style" or "settings"
+        self._screen = "main"  # a key of SCREEN_PARENT, or "main"
+        self._list = ListNav()
+        self._list_rows: list[dict] = []  # rows of the current list screen: {id, label, value}
         self._last_second = -1
         self._note_entry: Entry | None = None  # finished entry waiting for its note
         self._rename_id: int | None = None  # project being renamed (same prompt, other mode)
@@ -70,6 +83,31 @@ class Controller(QObject):
     def selectedPart(self):
         """Style screen: 0 colour, 1 name, 2 time. -1 on the main screen or in the column."""
         return self._nav.card_and_part()[1] if self._screen == "style" else -1
+
+    @Property(int, constant=True)
+    def firstItem(self):
+        """Selection index of the first project card on the main screen."""
+        return FIRST_PROJECT
+
+    @Property(bool, notify=screenChanged)
+    def screenIsList(self):
+        return self._screen in LIST_SCREENS
+
+    @Property(str, notify=screenChanged)
+    def listTitle(self):
+        return LIST_TITLES.get(self._screen, "")
+
+    @Property("QVariantList", notify=listChanged)
+    def listRows(self):
+        return self._list_rows
+
+    @Property(int, notify=listChanged)
+    def listSelected(self):
+        return self._list.selected
+
+    @Property(int, notify=listChanged)
+    def listOffset(self):
+        return self._list.offset
 
     @Property(bool, notify=resetArmedChanged)
     def resetArmed(self):
@@ -165,6 +203,36 @@ class Controller(QObject):
             self._screen = screen
             self.screenChanged.emit()
 
+    def _open_screen(self, screen: str) -> None:
+        """Show a screen; list screens get fresh rows and selection."""
+        if screen in LIST_SCREENS:
+            self._list_rows = self._rows_for(screen)
+            self._list = ListNav(len(self._list_rows))
+            self.listChanged.emit()
+        self._set_screen(screen)
+
+    def _rows_for(self, screen: str) -> list[dict]:
+        def row(id_: str, label: str, value: str = "") -> dict:
+            return {"id": id_, "label": label, "value": value}
+
+        if screen == "settings":
+            now = datetime.fromtimestamp(self._clock())
+            return [
+                row("back", "Back"),
+                row("datetime", "Date & time", now.strftime("%d %b %Y  %H:%M")),
+                row("status", "Status"),
+            ]
+        return []
+
+    def _activate_list(self, index: int) -> None:
+        if not 0 <= index < len(self._list_rows):
+            return
+        row_id = self._list_rows[index]["id"]
+        if row_id == "back":
+            self.back()
+        else:
+            self._open_screen(row_id)
+
     @Slot(int)
     def turn(self, steps: int) -> None:
         """Knob turned: positive = clockwise = selection moves right."""
@@ -177,7 +245,11 @@ class Controller(QObject):
                 self._delete_armed = False  # moving away cancels a pending delete
                 self.noteChanged.emit()
             return
-        if self._screen == "settings":
+        if self._screen in LIST_SCREENS:
+            self._list.move(steps)
+            self.listChanged.emit()
+            return
+        if self._screen not in ("main", "style"):
             return
         before = (self._nav.selected, self._nav.offset)
         self._nav.move(steps)
@@ -188,15 +260,24 @@ class Controller(QObject):
         """Knob button pressed."""
         if self._prompt_open():
             {NOTE_DELETE: self.noteDelete, NOTE_SKIP: self.noteSkip, NOTE_SAVE: self.noteSave}[self._note_focus]()
-        elif self._screen == "settings":
-            self.back()
+        elif self._screen in LIST_SCREENS:
+            self._activate_list(self._list.selected)
+        elif self._screen not in ("main", "style"):
+            self.back()  # placeholder screens: any press goes back
         else:
             self._activate(self._nav.selected)
 
     @Slot(int)
     def tap(self, index: int) -> None:
         """Touchscreen tap on an item (same item index as the knob uses)."""
-        if self._screen == "settings" or self._prompt_open():
+        if self._prompt_open():
+            return
+        if self._screen in LIST_SCREENS:
+            self._list.select(index)
+            self.listChanged.emit()
+            self._activate_list(index)
+            return
+        if self._screen not in ("main", "style"):
             return
         before = (self._nav.selected, self._nav.offset)
         self._nav.select(index)
@@ -205,15 +286,21 @@ class Controller(QObject):
 
     @Slot()
     def back(self) -> None:
-        """Return to the main screen in its default view."""
-        self._use_nav(StripNav(self._nav.project_count))
-        self._set_screen("main")
+        """Go up one level; the main screen comes back in its default view."""
+        parent = SCREEN_PARENT.get(self._screen, "main")
+        if parent == "main":
+            self._use_nav(StripNav(self._nav.project_count))
+            self._set_screen("main")
+        else:
+            self._open_screen(parent)
 
     def _activate(self, index: int) -> None:
         if self._screen == "style":
             self._activate_style(index)
         elif index == SETTINGS:
-            self._set_screen("settings")
+            self._open_screen("settings")
+        elif index == REPORTS:
+            self._open_screen("reports")
         elif index == STYLE:
             self._use_nav(StripNav(self._nav.project_count, column_items=1, parts=STYLE_PARTS))
             self._set_screen("style")
