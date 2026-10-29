@@ -138,11 +138,17 @@ body { font-family: system-ui, "Segoe UI", Roboto, sans-serif; color: #fff; user
 #rep-period .total { display: flex; align-items: baseline; gap: 20px; margin-left: 20px; }
 #rep-period .total .lbl { font-size: 30px; color: #aab2bf; }
 #rep-period .total .val { font-size: 52px; font-weight: 700; }
-#rep-chart { position: absolute; left: 15px; right: 15px; top: 205px; bottom: 15px; }
-#rep-chart .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #6b7380; }
-.rrow { position: relative; display: flex; align-items: center; }
-.rrow .rname { flex: none; width: 250px; padding-left: 8px; font-size: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rrow .rname.archived { color: #aab2bf; }
-.rrow .rbar { flex: none; height: 40px; border-radius: 3px; min-width: 0; }
-.rrow .rval { position: absolute; right: 0; width: 170px; font-size: 28px; }
-.rrow .rval.zero { color: #6b7380; }
+#rep-list { position: absolute; left: 15px; right: 15px; top: 195px; bottom: 15px; overflow: hidden; }
+#rep-list .rcontent { position: relative; display: flow-root; will-change: transform; }  /* flow-root: the first header's margin must not leak out and shift the scroll maths */
+#rep-list .empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 32px; color: #6b7380; }
+.rhead { display: flex; align-items: center; height: 50px; margin-top: 6px; padding: 0 14px 0 10px; }
+.rhead .dot { flex: none; width: 22px; height: 22px; border-radius: 11px; margin-right: 14px; }
+.rhead .name { flex: 1; min-width: 0; font-size: 30px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.rhead .total { flex: none; font-size: 28px; color: #aab2bf; margin-left: 20px; }
+.rentry { position: relative; background: #1f232b; border-radius: 4px; margin: 6px 8px 0; padding: 10px 24px; min-height: 58px; cursor: pointer; }
+.rentry::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: var(--c); }
+.rentry .line1 { display: flex; justify-content: space-between; height: 34px; line-height: 34px; font-size: 28px; }
+.rentry .time { font-weight: 700; }
+.rentry .dur { color: #aab2bf; }
+.rentry .rnote { margin-top: 2px; font-size: 26px; line-height: 1.25; color: #d5dbe5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rentry.focus::after { content: ""; position: absolute; inset: 0; border: 5px solid #fff; border-radius: 4px; pointer-events: none; }

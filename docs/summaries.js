@@ -69,6 +69,33 @@ export function summary(store, kind, anchor, now) {
   return { kind, start, end, label: periodLabel(anchor, kind, now), total: rows.reduce((t, r) => t + r.seconds, 0), rows };
 }
 
+/**
+ * Every entry of the period, grouped per project. Groups are sorted alphabetically by project name
+ * (ignoring case, then by id) and only exist for projects with time in the period (archived ones
+ * included). Inside a group the entries run from the earliest to the latest start. An entry's
+ * `seconds` is clipped to the period, so the entries of a group add up to the group's `seconds`.
+ */
+export function groupedEntries(store, kind, anchor, now) {
+  const [start, end] = periodBounds(anchor, kind);
+  const projects = new Map(store.data.projects.map((p) => [p.id, p]));
+  const groups = new Map();
+  for (const e of store.entriesBetween(start, end)) {
+    const stop = e.end ?? now;
+    const seconds = Math.max(0, Math.min(stop, end) - Math.max(e.start, start));
+    const p = projects.get(e.projectId);
+    if (!groups.has(p.id)) groups.set(p.id, { projectId: p.id, name: p.name, color: p.color, archived: p.archived, seconds: 0, entries: [] });
+    const g = groups.get(p.id);
+    g.seconds += seconds;
+    g.entries.push({ id: e.id, start: e.start, end: e.end, seconds, note: e.note });
+  }
+  for (const g of groups.values()) g.entries.sort((a, b) => a.start - b.start || a.id - b.id);
+  return [...groups.values()].sort((a, b) => {
+    const x = a.name.toLowerCase();
+    const y = b.name.toLowerCase();
+    return x < y ? -1 : x > y ? 1 : a.projectId - b.projectId;
+  });
+}
+
 /** Start of the oldest period worth showing (the one with the first entry) and of the current one. */
 export function stepLimits(store, kind, now) {
   const current = periodBounds(now, kind)[0];

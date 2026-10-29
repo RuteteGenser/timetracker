@@ -5,7 +5,7 @@
 
 import { StripNav, ListNav, SETTINGS, STYLE, REPORTS, FIRST_PROJECT } from "./nav.js";
 import { Store, EntryError, COLOR_CYCLE, dayBounds, nextColor } from "./store.js";
-import { KINDS, periodBounds, shiftPeriod, stepLimits, summary } from "./summaries.js";
+import { KINDS, groupedEntries, periodBounds, shiftPeriod, stepLimits, summary } from "./summaries.js";
 import { statusRows } from "./status.js";
 
 const SLOT_W = 250; // five equal slots across the 1250 px inside the 15 px margin
@@ -38,6 +38,7 @@ let resetArmed = null; // Style item whose time reset waits for its confirming s
 let menuPid = null; // project the open menu (More / Archived) is about
 let menuArmed = false; // Delete in that menu was pressed once and waits for confirmation
 let entryId = null; // entry open in the editor
+let entryOrigin = "entries"; // where Back from the entry editor goes: "entries" or "reports"
 let entryError = ""; // why the last change to it was refused
 let dtEntryField = null; // "start" or "end" while Date & time edits an entry
 const listMemory = {}; // selected row of list screens we left, restored on Back
@@ -295,7 +296,7 @@ function activateList(index) {
   else if (r.id === "moveleft" || r.id === "moveright") menuMove(r.id === "moveleft" ? -1 : 1);
   else if (r.id === "delete") menuDelete();
   else if (r.id === "restore") menuRestore();
-  else if (r.id.startsWith("entry:")) { entryId = Number(r.id.slice(6)); menuArmed = false; openScreen("entryedit"); }
+  else if (r.id.startsWith("entry:")) { entryId = Number(r.id.slice(6)); entryOrigin = "entries"; menuArmed = false; openScreen("entryedit"); }
   else if (r.id === "project") entryCycleProject();
   else if (r.id === "start" || r.id === "end") openDatetime("entryedit", r.id);
   else if (r.id === "note") openEntryNote();
@@ -334,7 +335,7 @@ function turn(steps) {
   }
   if (screen === "reports") {
     if (rep.stepping) repStep(steps);
-    else { rep.focus = Math.max(0, Math.min(REP_ITEMS - 1, rep.focus + steps)); renderNav(); }
+    else { rep.focus = Math.max(0, Math.min(REP_ITEMS - 1 + rep.entries.length, rep.focus + steps)); renderNav(); }
     return;
   }
   if (screen !== "main" && screen !== "style") return;
@@ -444,7 +445,7 @@ function menuDelete() {
     store.deleteEntry(entryId);
     renderTimes();
     menuArmed = false;
-    openScreen("entries", true);
+    openScreen(entryOrigin, true);
     return;
   }
   const card = menuCard();
@@ -471,7 +472,7 @@ function activate(index) {
 }
 
 function back() { // go up one level; the main screen comes back in its default view
-  const parent = returnTo || SCREEN_PARENT[screen] || "main";
+  const parent = returnTo || (screen === "entryedit" ? entryOrigin : SCREEN_PARENT[screen]) || "main";
   returnTo = null;
   if (parent === "main") {
     useNav(new StripNav(nav.projectCount));
@@ -537,11 +538,14 @@ function openEntryNote() {
 const REP_BACK = 0;
 const REP_ENTRIES = 4;
 const REP_PERIOD = 5;
-const REP_ITEMS = 6;
-let rep = { kind: "day", anchor: 0, focus: REP_PERIOD, stepping: false, data: null, limits: [0, 0] };
+const REP_ITEMS = 6; // the top controls; focus REP_ITEMS + k is the k-th entry of the list below them
+// The period is "live" when the screen opens: turning the knob goes to the previous or next period.
+// Pressing the period leaves live mode ("move"): turning then walks the focus over the controls and
+// down the entry list; pressing the period again, or a Day / Week / Month button, is live again.
+let rep = { kind: "day", anchor: 0, focus: REP_PERIOD, stepping: true, data: null, limits: [0, 0], items: [], entries: [], scrollY: 0, periodKey: "" };
 
 function openReports() {
-  rep = { kind: "day", anchor: store.now(), focus: REP_PERIOD, stepping: false, data: null, limits: [0, 0] };
+  rep = { kind: "day", anchor: store.now(), focus: REP_PERIOD, stepping: true, data: null, limits: [0, 0], items: [], entries: [], scrollY: 0, periodKey: "" };
   repRefresh();
   screen = "reports";
 }
@@ -550,6 +554,40 @@ function repRefresh() {
   const now = store.now();
   rep.data = summary(store, rep.kind, rep.anchor, now);
   rep.limits = stepLimits(store, rep.kind, now);
+  repBuildItems(now);
+  // entries may have gone (deleted, or a period change by touch): keep the focus on something that exists
+  rep.focus = Math.min(rep.focus, REP_ITEMS - 1 + rep.entries.length);
+}
+
+/** The list under the controls: per project (alphabetical) a header, then its entries. */
+function repBuildItems(now) {
+  const items = [];
+  const entries = [];
+  for (const g of groupedEntries(store, rep.kind, rep.anchor, now)) {
+    items.push({ kind: "header", name: g.name + (g.archived ? " (archived)" : ""), color: g.color, total: span(g.seconds) });
+    for (const e of g.entries) {
+      const start = new Date(e.start * 1000);
+      let end = "now";
+      if (e.end !== null) {
+        const stop = new Date(e.end * 1000);
+        end = stop.toDateString() === start.toDateString() ? fmtTime(stop) : `${fmtDate(stop)} ${fmtTime(stop)}`;
+      }
+      const day = rep.kind === "day" ? "" : `${start.toLocaleString("en", { weekday: "short" })} ${fmtDate(start)}  `;
+      items.push({ kind: "entry", k: entries.length, color: g.color, time: `${day}${fmtTime(start)}\u2013${end}`, duration: span(e.seconds), note: e.note });
+      entries.push(e.id);
+    }
+  }
+  rep.items = items;
+  rep.entries = entries;
+}
+
+/** Open an entry of the list in the editor; Back returns to the same place in the report. */
+function openReportEntry(k) {
+  if (k < 0 || k >= rep.entries.length) return;
+  entryId = rep.entries[k];
+  entryOrigin = "reports";
+  menuArmed = false;
+  openScreen("entryedit");
 }
 
 /** Move to an older (negative) or newer (positive) period, never past the first entry or today. */
@@ -567,6 +605,8 @@ function repSetKind(kind) {
   const start = periodBounds(rep.anchor, kind)[0];
   if (start < rep.limits[0]) rep.anchor = rep.limits[0];
   else if (start > rep.limits[1]) rep.anchor = rep.limits[1];
+  rep.stepping = true; // choosing a kind is followed by choosing the period
+  rep.focus = REP_PERIOD;
   repRefresh();
 }
 
@@ -578,15 +618,24 @@ function repPressItem(item) {
 
 function repPress() {
   if (rep.focus < REP_PERIOD) repPressItem(rep.focus);
-  else rep.stepping = !rep.stepping;
-  if (screen === "reports") renderNav();
+  else if (rep.focus === REP_PERIOD) rep.stepping = !rep.stepping;
+  else openReportEntry(rep.focus - REP_ITEMS);
+  renderNav();
 }
 
 function repTap(item) {
-  rep.stepping = item === REP_PERIOD && rep.focus === item ? !rep.stepping : false;
+  if (item === REP_PERIOD) rep.stepping = rep.focus === item ? !rep.stepping : true;
+  else rep.stepping = false;
   rep.focus = item;
   repPressItem(item);
   if (screen === "reports") renderNav();
+}
+
+function repTapEntry(k) {
+  rep.stepping = false;
+  rep.focus = REP_ITEMS + k;
+  openReportEntry(k);
+  renderNav();
 }
 
 function renderRep() {
@@ -621,36 +670,57 @@ function renderRep() {
   total.querySelector(".val").textContent = repSpan(d.total);
   period.appendChild(total);
 
-  const chart = document.getElementById("rep-chart");
-  chart.replaceChildren();
-  if (d.total === 0) {
+  const list = document.getElementById("rep-list");
+  const content = list.querySelector(".rcontent");
+  content.replaceChildren();
+  list.querySelector(".empty")?.remove();
+  if (!rep.items.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent = "Nothing tracked in this period";
-    chart.appendChild(empty);
+    list.appendChild(empty);
+    content.style.transform = "";
     return;
   }
-  const max = Math.max(1, ...d.rows.map((r) => r.seconds));
-  const rowH = Math.min(64, chart.clientHeight / Math.max(1, d.rows.length));
-  const barW = chart.clientWidth - 250 - 170 - 20;
-  for (const r of d.rows) {
-    const row = document.createElement("div");
-    row.className = "rrow";
-    row.style.height = `${rowH}px`;
-    row.innerHTML = '<div class="rname"></div><div class="rbar"></div><div class="rval"></div>';
-    const name = row.querySelector(".rname");
-    name.textContent = r.name + (r.archived ? " (archived)" : "");
-    name.classList.toggle("archived", r.archived);
-    const bar = row.querySelector(".rbar");
-    bar.style.background = r.color;
-    bar.style.height = `${Math.min(rowH * 0.62, 40)}px`;
-    bar.style.width = `${r.seconds > 0 ? Math.max(6, (barW * r.seconds) / max) : 0}px`;
-    const val = row.querySelector(".rval");
-    val.textContent = repSpan(r.seconds);
-    val.style.left = `${250 + barW + 20}px`;
-    val.classList.toggle("zero", r.seconds === 0);
-    chart.appendChild(row);
+  for (const it of rep.items) {
+    const el = document.createElement("div");
+    if (it.kind === "header") {
+      el.className = "rhead";
+      el.innerHTML = '<span class="dot"></span><span class="name"></span><span class="total"></span>';
+      el.querySelector(".dot").style.background = it.color;
+      el.querySelector(".name").textContent = it.name;
+      el.querySelector(".total").textContent = it.total;
+    } else {
+      el.className = `rentry ${rep.focus === REP_ITEMS + it.k ? "focus" : ""}`;
+      el.style.setProperty("--c", it.color);
+      el.innerHTML = '<div class="line1"><span class="time"></span><span class="dur"></span></div>';
+      el.querySelector(".time").textContent = it.time;
+      el.querySelector(".dur").textContent = it.duration;
+      if (it.note) {
+        const note = document.createElement("div");
+        note.className = "rnote";
+        note.textContent = it.note;
+        el.appendChild(note);
+      }
+      el.addEventListener("click", () => repTapEntry(it.k));
+    }
+    content.appendChild(el);
   }
+  // Scroll (no animation) just enough to keep the outlined entry in view, with its group header
+  // when it is the first of its group; another period starts at the top.
+  const periodKey = `${rep.kind}|${d.label}`;
+  if (periodKey !== rep.periodKey) { rep.periodKey = periodKey; rep.scrollY = 0; }
+  const focused = content.querySelector(".rentry.focus");
+  if (focused) {
+    let top = focused.offsetTop;
+    const before = focused.previousElementSibling;
+    if (before?.classList.contains("rhead")) top = before.offsetTop;
+    const bottom = focused.offsetTop + focused.offsetHeight;
+    if (top < rep.scrollY) rep.scrollY = top;
+    else if (bottom > rep.scrollY + list.clientHeight) rep.scrollY = bottom - list.clientHeight;
+  }
+  rep.scrollY = Math.max(0, Math.min(rep.scrollY, Math.max(0, content.offsetHeight - list.clientHeight)));
+  content.style.transform = `translateY(${-rep.scrollY}px)`;
 }
 
 // Under an hour show minutes and seconds; from an hour up, hours and minutes.

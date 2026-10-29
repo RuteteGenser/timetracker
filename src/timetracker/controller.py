@@ -15,7 +15,7 @@ from .db import Database, Entry, EntryError
 from .hardware import rtc_info
 from .model import ProjectModel
 from .nav import FIRST_PROJECT, REPORTS, SETTINGS, STYLE, ListNav, StripNav
-from .summaries import KINDS, period_bounds, shift_period, step_limits, summary
+from .summaries import KINDS, grouped_entries, period_bounds, shift_period, step_limits, summary
 from .timeutil import day_bounds, span_text
 
 # Text prompt buttons, left to right; the knob button presses the focused one.
@@ -53,13 +53,16 @@ DT_CANCEL = 5
 DT_SAVE = 6
 HEARTBEAT_SECONDS = 60
 
-# Reports screen: focusable items left to right. Back, the three period kinds, Entries (the entries
+# Reports screen. The period is "live" when the screen opens: turning the knob goes to the previous or
+# next period. Pressing the period leaves live mode ("move"): turning then walks the focus over the
+# controls and down the entry list; pressing the period again, or a Day / Week / Month button, is live
+# again. Focusable items left to right: Back, the three period kinds, Entries (the entries
 # of the period shown) and the period itself: pressing the period starts "stepping", where the knob
 # moves to older / newer periods.
 REP_BACK = 0
 REP_ENTRIES = 4
 REP_PERIOD = 5
-REP_ITEMS = 6
+REP_ITEMS = 6  # the top controls; focus REP_ITEMS + k is the k-th entry of the list below them
 
 
 class Controller(QObject):
@@ -94,11 +97,14 @@ class Controller(QObject):
         self._rep_kind = "day"
         self._rep_anchor = 0  # any moment inside the period being shown
         self._rep_focus = REP_PERIOD
-        self._rep_stepping = False
+        self._rep_stepping = True  # "live" mode: the knob changes the period
         self._rep_data: dict = {"label": "", "total": 0, "rows": []}
+        self._rep_items: list[dict] = []  # the grouped list shown under the controls (headers and entries)
+        self._rep_entries: list[int] = []  # entry ids in the order they appear in that list
         self._rep_limits = (0, 0)
         self._entry_id: int | None = None  # entry open in the editor
         self._entry_error = ""  # why the last change to it was refused
+        self._entry_origin = "entries"  # where Back from the entry editor goes: "entries" or "reports"
         self._entry_note = False  # the text prompt is editing that entry's note
         self._dt_entry_field: str | None = None  # "start" or "end" while Date & time edits an entry
         self._list_memory: dict[str, int] = {}  # selected row of list screens we left, restored on Back
@@ -225,6 +231,11 @@ class Controller(QObject):
     def repRows(self):
         return [{"name": r["name"], "color": r["color"], "seconds": r["seconds"], "archived": r["archived"]}
                 for r in self._rep_data["rows"]]
+
+    @Property("QVariantList", notify=repChanged)
+    def repItems(self):
+        """Headers and entries of the period, grouped per project (see _rep_refresh)."""
+        return self._rep_items
 
     @Property(int, notify=repChanged)
     def repFocus(self):
@@ -449,6 +460,7 @@ class Controller(QObject):
             self._menu_restore()
         elif row_id.startswith("entry:"):
             self._entry_id = int(row_id.split(":", 1)[1])
+            self._entry_origin = "entries"
             self._menu_armed = False
             self._open_screen("entryedit")
         elif row_id == "project":
@@ -495,7 +507,7 @@ class Controller(QObject):
             if self._rep_stepping:
                 self._rep_step(steps)
             else:
-                self._rep_focus = max(0, min(REP_ITEMS - 1, self._rep_focus + steps))
+                self._rep_focus = max(0, min(REP_ITEMS - 1 + len(self._rep_entries), self._rep_focus + steps))
                 self.repChanged.emit()
             return
         if self._screen not in ("main", "style"):
@@ -540,7 +552,7 @@ class Controller(QObject):
     @Slot()
     def back(self) -> None:
         """Go up one level; the main screen comes back in its default view."""
-        parent = self._return_to or SCREEN_PARENT.get(self._screen, "main")
+        parent = self._return_to or (self._entry_origin if self._screen == "entryedit" else SCREEN_PARENT.get(self._screen, "main"))
         self._return_to = None
         if parent == "main":
             self._use_nav(StripNav(self._nav.project_count))
@@ -648,7 +660,7 @@ class Controller(QObject):
             self._db.delete_entry(self._entry_id)
             self._refresh_times()
             self._menu_armed = False
-            self._open_screen("entries", restore=True)
+            self._open_screen(self._entry_origin, restore=True)
             return
         card = self._menu_card()
         from_archive = self._screen == "archivedmenu"
@@ -922,7 +934,7 @@ class Controller(QObject):
         self._rep_kind = "day"
         self._rep_anchor = int(self._clock())
         self._rep_focus = REP_PERIOD
-        self._rep_stepping = False
+        self._rep_stepping = True
         self._rep_refresh()
         self._set_screen("reports")
 
@@ -930,7 +942,36 @@ class Controller(QObject):
         now = int(self._clock())
         self._rep_data = summary(self._db, self._rep_kind, self._rep_anchor, now)
         self._rep_limits = step_limits(self._db, self._rep_kind, now)
+        self._rep_build_items(now)
+        # entries may have gone (deleted, or a period change by touch): keep the focus on something that exists
+        self._rep_focus = min(self._rep_focus, REP_ITEMS - 1 + len(self._rep_entries))
         self.repChanged.emit()
+
+    def _rep_build_items(self, now: int) -> None:
+        """The list under the controls: per project (alphabetical) a header, then its entries."""
+        kind = self._rep_kind
+        items: list[dict] = []
+        entries: list[int] = []
+        for group in grouped_entries(self._db, kind, self._rep_anchor, now):
+            items.append({
+                "kind": "header", "name": group["name"] + (" (archived)" if group["archived"] else ""),
+                "color": group["color"], "total": span_text(group["seconds"]),
+            })
+            for e in group["entries"]:
+                start = datetime.fromtimestamp(e["start"])
+                if e["end"] is None:
+                    end = "now"
+                else:
+                    stop = datetime.fromtimestamp(e["end"])
+                    end = f"{stop:%H:%M}" if stop.date() == start.date() else f"{stop:%d %b %H:%M}"
+                day = "" if kind == "day" else f"{start:%a} {start.day} {start:%b}  "
+                items.append({
+                    "kind": "entry", "k": len(entries), "color": group["color"],
+                    "time": f"{day}{start:%H:%M}\u2013{end}", "duration": span_text(e["seconds"]), "note": e["note"],
+                })
+                entries.append(e["id"])
+        self._rep_items = items
+        self._rep_entries = entries
 
     def _rep_step(self, steps: int) -> None:
         """Move to an older (negative) or newer (positive) period, never past the first entry or today."""
@@ -950,6 +991,8 @@ class Controller(QObject):
             self._rep_anchor = oldest
         elif start > current:
             self._rep_anchor = current
+        self._rep_stepping = True  # choosing a kind is followed by choosing the period
+        self._rep_focus = REP_PERIOD
         self._rep_refresh()
 
     def _rep_press(self) -> None:
@@ -959,18 +1002,39 @@ class Controller(QObject):
             self._rep_set_kind(KINDS[self._rep_focus - 1])
         elif self._rep_focus == REP_ENTRIES:
             self._open_entries()
-        else:
+        elif self._rep_focus == REP_PERIOD:
             self._rep_stepping = not self._rep_stepping
             self.repChanged.emit()
+        else:
+            self._open_report_entry(self._rep_focus - REP_ITEMS)
+
+    def _open_report_entry(self, k: int) -> None:
+        """Open an entry of the list in the editor; Back returns to the same place in the report."""
+        if 0 <= k < len(self._rep_entries):
+            self._entry_id = self._rep_entries[k]
+            self._entry_origin = "reports"
+            self._menu_armed = False
+            self._open_screen("entryedit")
 
     @Slot(int)
     def repTap(self, item: int) -> None:
-        """Touch: tap Back, Day, Week, Month, or the period label (which starts or ends stepping)."""
+        """Touch: tap Back, Day, Week, Month, Entries or the period label (which starts or ends live mode)."""
         if self._screen != "reports" or not 0 <= item < REP_ITEMS:
             return
-        self._rep_stepping = (not self._rep_stepping) if (item == REP_PERIOD and self._rep_focus == item) else False
+        if item == REP_PERIOD:
+            self._rep_stepping = (not self._rep_stepping) if self._rep_focus == item else True
+        else:
+            self._rep_stepping = False
         self._rep_focus = item
         self._rep_press_item(item)
+
+    @Slot(int)
+    def repTapEntry(self, k: int) -> None:
+        """Touch: tap an entry of the list."""
+        if self._screen == "reports" and 0 <= k < len(self._rep_entries):
+            self._rep_stepping = False
+            self._rep_focus = REP_ITEMS + k
+            self._open_report_entry(k)
 
     def _rep_press_item(self, item: int) -> None:
         if item == REP_BACK:

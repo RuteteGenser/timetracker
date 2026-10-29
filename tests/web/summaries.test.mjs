@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "../../docs/store.js";
-import { periodBounds, shiftPeriod, periodLabel, summary, stepLimits } from "../../docs/summaries.js";
+import { periodBounds, shiftPeriod, periodLabel, summary, stepLimits, groupedEntries } from "../../docs/summaries.js";
 
 const ts = (...a) => new Date(...a.map((v, i) => (i === 1 ? v - 1 : v))).getTime() / 1000; // month is 1-based here
 const at = (t) => new Date(t * 1000);
@@ -169,4 +169,105 @@ test("earliestTimestamp", () => {
   assert.equal(s.earliestTimestamp(), null);
   const e = s.start(s.projects()[0].id);
   assert.equal(s.earliestTimestamp(), e.start);
+});
+
+
+// -- groupedEntries: the list on the Reports page ------------------------------------------------------------
+
+function clockStore() {
+  const state = { t: ts(2026, 10, 28, 9) };
+  const s = new Store(memory(), () => state.t);
+  return { s, state };
+}
+
+function track(s, state, project, seconds, gap = 60) {
+  const e = s.start(project.id);
+  state.t += seconds;
+  s.stop();
+  state.t += gap;
+  return e;
+}
+
+test("groups are alphabetical ignoring case and only exist for projects with time", () => {
+  const { s, state } = clockStore();
+  const ids = ["zed", "Apple", "mango", "Unused"].map((n) => s.addProject(n, "#111111"));
+  for (const id of ids.slice(0, 3)) track(s, state, { id }, 600);
+  assert.deepEqual(groupedEntries(s, "day", state.t, state.t).map((g) => g.name), ["Apple", "mango", "zed"]);
+});
+
+test("equal names fall back to the project id", () => {
+  const { s, state } = clockStore();
+  const a = s.addProject("Same", "#1");
+  const b = s.addProject("same", "#2");
+  track(s, state, { id: b }, 60);
+  track(s, state, { id: a }, 60);
+  assert.deepEqual(groupedEntries(s, "day", state.t, state.t).map((g) => g.projectId), [a, b]);
+});
+
+test("entries inside a group run from the earliest to the latest start", () => {
+  const { s, state } = clockStore();
+  const a = s.addProject("A", "#1");
+  state.t = ts(2026, 10, 28, 15);
+  const first = track(s, state, { id: a }, 600);
+  state.t = ts(2026, 10, 28, 9);
+  const second = track(s, state, { id: a }, 600);
+  state.t = ts(2026, 10, 28, 12);
+  const third = track(s, state, { id: a }, 600);
+  const [g] = groupedEntries(s, "day", state.t, state.t);
+  assert.deepEqual(g.entries.map((e) => e.id), [second.id, third.id, first.id]);
+});
+
+test("notes are carried along", () => {
+  const { s, state } = clockStore();
+  const a = s.addProject("A", "#1");
+  const e = track(s, state, { id: a }, 600);
+  s.setNote(e.id, "Quarterly report");
+  track(s, state, { id: a }, 60);
+  const [g] = groupedEntries(s, "day", state.t, state.t);
+  assert.deepEqual(g.entries.map((x) => x.note), ["Quarterly report", ""]);
+});
+
+test("group totals equal the summary and the entries add up", () => {
+  const { s, a, b, state } = makeEntries();
+  for (const [kind, anchor] of [["day", ts(2026, 10, 28)], ["week", ts(2026, 10, 28)], ["month", ts(2026, 10, 15)], ["month", ts(2026, 11, 15)], ["week", ts(2026, 11, 3)]]) {
+    const groups = groupedEntries(s, kind, anchor, state.t);
+    const sum = summary(s, kind, anchor, state.t);
+    const byProject = Object.fromEntries(groups.map((g) => [g.projectId, g.seconds]));
+    for (const row of sum.rows) assert.equal(byProject[row.projectId] ?? 0, row.seconds, kind);
+    for (const g of groups) assert.equal(g.seconds, g.entries.reduce((t, e) => t + e.seconds, 0));
+    assert.equal(groups.reduce((t, g) => t + g.seconds, 0), sum.total);
+  }
+});
+
+test("an entry crossing midnight shows only its part in each period", () => {
+  const { s, state } = makeEntries();
+  const sat = groupedEntries(s, "day", ts(2026, 10, 31, 12), state.t)[0];
+  const sun = groupedEntries(s, "day", ts(2026, 11, 1, 12), state.t)[0];
+  assert.deepEqual([sat.entries.map((e) => e.seconds), sun.entries.map((e) => e.seconds)], [[1800], [1800]]);
+  assert.equal(sat.entries[0].id, sun.entries[0].id);
+  assert.equal(sat.entries[0].end - sat.entries[0].start, 3600); // its real times are kept
+});
+
+test("an archived project with time is listed", () => {
+  const { s, b, state } = makeEntries();
+  s.archiveProject(b.id);
+  const groups = groupedEntries(s, "week", ts(2026, 10, 28), state.t);
+  const names = groups.map((g) => [g.name, g.archived]);
+  assert.deepEqual(names, [...names].sort((x, y) => x[0].toLowerCase().localeCompare(y[0].toLowerCase())));   // alphabetical
+  assert.ok(names.some(([n, archived]) => n === b.name && archived === true));
+  assert.equal(names.length, 2);
+});
+
+test("a running entry counts up to now and has no end", () => {
+  const { s, state } = clockStore();
+  const a = s.addProject("A", "#1");
+  s.start(a);
+  state.t += 777;
+  const [g] = groupedEntries(s, "day", state.t, state.t);
+  assert.deepEqual([g.entries[0].end, g.entries[0].seconds], [null, 777]);
+});
+
+test("an empty period has no groups", () => {
+  const { s, state } = clockStore();
+  assert.deepEqual(groupedEntries(s, "day", state.t, state.t), []);
 });

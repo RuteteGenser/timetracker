@@ -1,10 +1,12 @@
 import QtQuick
 
-// Day / week / month totals as a bar chart, one bar per project and a total on top.
-// Knob: turn moves the outline over Back, Day, Week, Month, Entries and the period; pressing a kind
-// selects it, Entries lists the entries of the period shown, pressing the period starts "stepping"
-// (turn = older / newer, press to stop).
-// Touch: tap the buttons, and use the arrows beside the period.
+// Every entry of the day / week / month, grouped per project (alphabetical, earliest entry first,
+// with its note), under the controls and the total.
+// Knob: the period is "live" when the screen opens (blue): turning goes to the previous / next
+// period. Pressing it leaves live mode: turning then moves the outline over Back, Day, Week, Month,
+// Entries, the period and down the entry list; pressing an entry opens the editor, pressing the
+// period (or a Day / Week / Month button) is live again.
+// Touch: tap the buttons, the arrows beside the period, or an entry.
 Rectangle {
     id: root
     color: "#101216"
@@ -23,12 +25,6 @@ Rectangle {
         var m = Math.floor(s / 60)
         if (s < 3600) return m + "m " + (s % 60 < 10 ? "0" : "") + (s % 60) + "s"
         return Math.floor(s / 3600) + "h " + (m % 60 < 10 ? "0" : "") + (m % 60) + "m"
-    }
-
-    function maxSeconds() {
-        var m = 1
-        for (var i = 0; i < ctl.repRows.length; i++) m = Math.max(m, ctl.repRows[i].seconds)
-        return m
     }
 
     Row {   // first row: Back, Day, Week, Month and Entries
@@ -114,57 +110,146 @@ Rectangle {
         }
     }
 
-    Item {   // the bars
+    // The list under the controls. It scrolls (no animation) just enough to keep the outlined
+    // entry in view, with its group header when it is the first of its group.
+    Item {
         id: chart
-        x: root.pad; y: root.pad + 190 * root.u
+        x: root.pad; y: root.pad + 180 * root.u
         width: root.width - 2 * root.pad
         height: root.height - y - root.pad
-        readonly property real rowH: Math.min(64 * root.u, height / Math.max(1, ctl.repRows.length))
-        readonly property real nameW: 250 * root.u
-        readonly property real valueW: 170 * root.u
-        readonly property real barW: width - nameW - valueW - 20 * root.u
+        clip: true
+
+        property real scrollY: 0
+        property string periodKey: ""
+
+        function ensureVisible() {
+            var key = ctl.repKind + "|" + ctl.repLabel
+            if (key !== periodKey) {      // another period: start at the top
+                periodKey = key
+                scrollY = 0
+            }
+            var k = ctl.repFocus - 6
+            if (k >= 0) {
+                for (var i = 0; i < rows.count; i++) {
+                    var row = rows.itemAt(i)
+                    if (row && row.isEntry && row.entryK === k) {
+                        var top = row.y, bottom = row.y + row.height
+                        var before = i > 0 ? rows.itemAt(i - 1) : null
+                        if (before && !before.isEntry) top = before.y   // the group header comes along
+                        if (top < scrollY) scrollY = top
+                        else if (bottom > scrollY + height) scrollY = bottom - height
+                        break
+                    }
+                }
+            }
+            scrollY = Math.max(0, Math.min(scrollY, Math.max(0, column.height - height)))
+        }
+        Connections {
+            target: ctl
+            function onRepChanged() { Qt.callLater(chart.ensureVisible) }
+        }
+        Component.onCompleted: ensureVisible()
 
         Text {
-            visible: ctl.repTotal === 0
+            visible: ctl.repItems.length === 0
             anchors.centerIn: parent
             text: "Nothing tracked in this period"
             color: "#6b7380"
             font.pixelSize: 32 * root.u
         }
 
-        Repeater {
-            model: ctl.repTotal === 0 ? [] : ctl.repRows
-            Item {
-                y: index * chart.rowH
-                width: chart.width
-                height: chart.rowH
+        Column {
+            id: column
+            y: -chart.scrollY
+            width: chart.width
+            spacing: 6 * root.u
 
-                Text {
-                    x: 8 * root.u
-                    width: chart.nameW - 16 * root.u
-                    height: parent.height
-                    verticalAlignment: Text.AlignVCenter
-                    text: modelData.name + (modelData.archived ? " (archived)" : "")
-                    color: modelData.archived ? "#aab2bf" : "#ffffff"
-                    font.pixelSize: 28 * root.u
-                    elide: Text.ElideRight
-                }
-                Rectangle {
-                    x: chart.nameW
-                    anchors.verticalCenter: parent.verticalCenter
-                    height: Math.min(parent.height * 0.62, 40 * root.u)
-                    width: Math.max(modelData.seconds > 0 ? 6 * root.u : 0, chart.barW * modelData.seconds / root.maxSeconds())
-                    radius: 3 * root.u
-                    color: modelData.color
-                }
-                Text {
-                    x: chart.nameW + chart.barW + 20 * root.u
-                    width: chart.valueW
-                    height: parent.height
-                    verticalAlignment: Text.AlignVCenter
-                    text: root.span(modelData.seconds)
-                    color: modelData.seconds > 0 ? "#ffffff" : "#6b7380"
-                    font.pixelSize: 28 * root.u
+            Repeater {
+                id: rows
+                model: ctl.repItems
+
+                Item {
+                    id: row
+                    readonly property bool isEntry: modelData.kind === "entry"
+                    readonly property int entryK: isEntry ? modelData.k : -1
+                    readonly property bool focused: isEntry && ctl.repFocus === 6 + modelData.k
+                    width: column.width
+                    height: isEntry ? card.height : 50 * root.u
+
+                    // group header: colour dot, project, and its total on the right
+                    Item {
+                        visible: !row.isEntry
+                        anchors.fill: parent
+                        Rectangle {
+                            x: 10 * root.u; anchors.verticalCenter: parent.verticalCenter
+                            width: 22 * root.u; height: 22 * root.u; radius: 11 * root.u
+                            color: modelData.color || "#ffffff"
+                        }
+                        Text {
+                            x: 46 * root.u; width: parent.width - 300 * root.u; height: parent.height
+                            verticalAlignment: Text.AlignVCenter
+                            text: modelData.name || ""
+                            color: "#ffffff"; font.pixelSize: 30 * root.u; font.bold: true
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            anchors { right: parent.right; rightMargin: 14 * root.u }
+                            height: parent.height
+                            verticalAlignment: Text.AlignVCenter
+                            text: modelData.total || ""
+                            color: "#aab2bf"; font.pixelSize: 28 * root.u
+                        }
+                    }
+
+                    // entry: time range and duration, then the note (two lines at most)
+                    Rectangle {
+                        id: card
+                        visible: row.isEntry
+                        x: 8 * root.u; width: parent.width - 16 * root.u
+                        height: Math.max(58 * root.u, texts.height + 20 * root.u)
+                        radius: 4 * root.u
+                        color: "#1f232b"
+
+                        Rectangle {   // the project's colour along the left edge
+                            width: 6 * root.u; height: parent.height
+                            color: modelData.color || "#ffffff"
+                        }
+                        Column {
+                            id: texts
+                            x: 24 * root.u; y: 10 * root.u
+                            width: parent.width - 48 * root.u
+                            spacing: 2 * root.u
+                            Item {
+                                width: parent.width; height: 34 * root.u
+                                Text {
+                                    text: modelData.time || ""
+                                    color: "#ffffff"; font.pixelSize: 28 * root.u; font.bold: true
+                                }
+                                Text {
+                                    anchors.right: parent.right
+                                    text: modelData.duration || ""
+                                    color: "#aab2bf"; font.pixelSize: 28 * root.u
+                                }
+                            }
+                            Text {
+                                visible: (modelData.note || "").length > 0
+                                width: parent.width
+                                text: modelData.note || ""
+                                color: "#d5dbe5"; font.pixelSize: 26 * root.u
+                                wrapMode: Text.Wrap
+                                maximumLineCount: 2
+                                elide: Text.ElideRight
+                            }
+                        }
+                        Rectangle {   // the outline: the knob is on this entry
+                            visible: row.focused
+                            anchors.fill: parent
+                            radius: parent.radius
+                            color: "transparent"
+                            border.color: "#ffffff"; border.width: 5 * root.u
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: ctl.repTapEntry(row.entryK) }
+                    }
                 }
             }
         }

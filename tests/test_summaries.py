@@ -170,3 +170,98 @@ def test_step_limits(db, clock):
     oldest, current = step_limits(db, "month", clock())
     assert datetime.fromtimestamp(oldest) == datetime(2026, 9, 1)
     assert datetime.fromtimestamp(current) == datetime(2026, 11, 1)
+
+
+# -- grouped_entries: the list on the Reports page -------------------------------------------------------
+
+from timetracker.summaries import grouped_entries
+
+
+def test_groups_are_alphabetical_ignoring_case_and_only_for_projects_with_time(db, clock):
+    zed, apple, mango, unused = (db.add_project(n, "#1") for n in ("zed", "Apple", "mango", "Unused"))
+    clock.t = int(ts(2026, 10, 28, 9))
+    for pid in (zed, apple, mango):
+        db.start(pid); clock.advance(600); db.stop(); clock.advance(60)
+    groups = grouped_entries(db, "day", clock(), clock())
+    assert [g["name"] for g in groups] == ["Apple", "mango", "zed"]       # not Apple, Unused, mango, zed (ASCII order)
+
+
+def test_equal_names_fall_back_to_the_project_id(db, clock):
+    a, b = db.add_project("Same", "#1"), db.add_project("same", "#2")
+    clock.t = int(ts(2026, 10, 28, 9))
+    for pid in (b, a):
+        db.start(pid); clock.advance(60); db.stop(); clock.advance(60)
+    assert [g["project_id"] for g in grouped_entries(db, "day", clock(), clock())] == [a, b]
+
+
+def test_entries_inside_a_group_run_from_earliest_to_latest(db, clock):
+    a = db.add_project("A", "#1")
+    b = db.add_project("B", "#1")
+    clock.t = int(ts(2026, 10, 28, 15))
+    first = db.start(a); clock.advance(600); db.stop()           # 15:00, made first
+    clock.t = int(ts(2026, 10, 28, 9))
+    second = db.start(a); clock.advance(600); db.stop()          # 09:00, made later but earlier in the day
+    clock.t = int(ts(2026, 10, 28, 12))
+    third = db.start(a); clock.advance(600); db.stop()
+    db.start(b); clock.advance(30); db.stop()
+    [group_a, group_b] = grouped_entries(db, "day", clock(), clock())
+    assert [e["id"] for e in group_a["entries"]] == [second.id, third.id, first.id]
+    starts = [e["start"] for e in group_a["entries"]]
+    assert starts == sorted(starts)
+    assert group_b["name"] == "B"
+
+
+def test_notes_are_carried_along(db, clock):
+    a = db.add_project("A", "#1")
+    clock.t = int(ts(2026, 10, 28, 9))
+    e = db.start(a); clock.advance(600); db.stop()
+    db.set_note(e.id, "Quarterly report")
+    clock.advance(100)
+    db.start(a); clock.advance(60); db.stop()
+    [group] = grouped_entries(db, "day", clock(), clock())
+    assert [x["note"] for x in group["entries"]] == ["Quarterly report", ""]
+
+
+def test_group_totals_equal_the_summary_and_the_entries_add_up(db, clock):
+    a, b = make_entries(db, clock)
+    for kind, anchor in (("day", ts(2026, 10, 28)), ("week", ts(2026, 10, 28)), ("month", ts(2026, 10, 15)),
+                         ("month", ts(2026, 11, 15)), ("week", ts(2026, 11, 3))):
+        groups = grouped_entries(db, kind, anchor, clock())
+        by_project = {g["project_id"]: g["seconds"] for g in groups}
+        s = summary(db, kind, anchor, clock())
+        for row in s["rows"]:
+            assert by_project.get(row["project_id"], 0) == row["seconds"], (kind, anchor)
+        for g in groups:
+            assert g["seconds"] == sum(e["seconds"] for e in g["entries"])
+        assert sum(g["seconds"] for g in groups) == s["total"]
+
+
+def test_an_entry_crossing_midnight_shows_only_its_part_in_each_period(db, clock):
+    a, b = make_entries(db, clock)                              # a: 31 Oct 23:30 for one hour
+    sat = grouped_entries(db, "day", ts(2026, 10, 31, 12), clock())[0]
+    sun = grouped_entries(db, "day", ts(2026, 11, 1, 12), clock())[0]
+    assert [e["seconds"] for e in sat["entries"]] == [1800]
+    assert [e["seconds"] for e in sun["entries"]] == [1800]
+    assert sat["entries"][0]["id"] == sun["entries"][0]["id"]   # the same entry, listed in both days
+    assert sat["entries"][0]["end"] - sat["entries"][0]["start"] == 3600    # its real times are kept
+
+
+def test_an_archived_project_with_time_is_listed(db, clock):
+    a, b = make_entries(db, clock)
+    db.archive_project(b)
+    names = [(g["name"], g["archived"]) for g in grouped_entries(db, "week", ts(2026, 10, 28), clock())]
+    assert names == [("A", False), ("B", True)]
+
+
+def test_a_running_entry_counts_up_to_now_and_has_no_end(db, clock):
+    a = db.add_project("A", "#1")
+    clock.t = int(ts(2026, 10, 28, 9))
+    db.start(a)
+    clock.advance(777)
+    [group] = grouped_entries(db, "day", clock(), clock())
+    assert group["entries"][0]["end"] is None and group["entries"][0]["seconds"] == 777
+
+
+def test_an_empty_period_has_no_groups(db, clock):
+    db.add_project("A", "#1")
+    assert grouped_entries(db, "day", ts(2026, 10, 28), ts(2026, 10, 28)) == []

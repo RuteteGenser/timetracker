@@ -16,9 +16,11 @@ for the parts list and wiring.
 - **Style:** per card, colour (8 steps), name, a reset for today's time (two presses), and **More**
   (archive, move left / right, delete). A **+** card adds a project; **Archived** lists hidden
   projects (restore or delete).
-- **Reports:** day / week / month bar charts per project; step to older periods with the knob.
-  **Entries** lists the entries of the period shown; each can be edited (project, start, end,
-  note) or deleted. Changes that would overlap another entry, put the end before the start or
+- **Reports:** every entry of the day / week / month, grouped per project (projects A-Z, entries
+  earliest first) with its note, and a total per project and overall. The period is live: turn the
+  knob for the previous / next day; press to move around the buttons and down the list; press an
+  entry to edit it. **Entries** opens the flat newest-first editor list; entries can be edited
+  (project, start, end, note) or deleted. Changes that would overlap another entry, put the end before the start or
   lie in the future are refused with the reason.
 - **Settings:** **Date & time** (sets the clock; a running timer keeps its elapsed time) and
   **Status** (clock check, last clock change, hardware clock, storage, counts, version).

@@ -94,6 +94,32 @@ def summary(db, kind: str, anchor: float, now: float) -> dict:
     }
 
 
+def grouped_entries(db, kind: str, anchor: float, now: float) -> list[dict]:
+    """Every entry of the period, grouped per project.
+
+    Groups are sorted alphabetically by project name (ignoring case, then by id) and only exist for
+    projects with time in the period (archived ones included). Inside a group the entries run from
+    the earliest to the latest start. An entry's `seconds` is clipped to the period, so the entries
+    of a group add up to the group's `seconds`, which equals summary()'s number for that project.
+    """
+    start, end = period_bounds(anchor, kind)
+    projects = {p.id: p for p in db.list_projects(include_archived=True)}
+    groups: dict[int, dict] = {}
+    for e in db.entries_between(start, end):
+        stop = e.end_ts if e.end_ts is not None else now
+        seconds = max(0, min(stop, end) - max(e.start_ts, start))
+        project = projects[e.project_id]
+        group = groups.setdefault(project.id, {
+            "project_id": project.id, "name": project.name, "color": project.color,
+            "archived": project.archived, "seconds": 0, "entries": [],
+        })
+        group["seconds"] += seconds
+        group["entries"].append({"id": e.id, "start": e.start_ts, "end": e.end_ts, "seconds": seconds, "note": e.note})
+    for group in groups.values():
+        group["entries"].sort(key=lambda x: (x["start"], x["id"]))
+    return sorted(groups.values(), key=lambda g: (g["name"].casefold(), g["project_id"]))
+
+
 def step_limits(db, kind: str, now: float) -> tuple[int, int]:
     """Start of the oldest period worth showing (the one with the first entry) and of the current one."""
     current = period_bounds(now, kind)[0]

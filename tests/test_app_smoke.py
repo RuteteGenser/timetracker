@@ -163,7 +163,8 @@ def test_reports_button_opens_reports_and_back_item_leaves(ui):
     ctl, window, _ = ui
     key(window, Qt.Key.Key_Left)
     key(window, Qt.Key.Key_Space)
-    assert ctl.screen == "reports"
+    assert ctl.screen == "reports" and ctl.repStepping
+    key(window, Qt.Key.Key_Space)          # leave live period mode: the knob now moves the outline
     for _ in range(5):
         key(window, Qt.Key.Key_Left)       # Period -> Entries -> Month -> Week -> Day -> Back
     assert ctl.repFocus == 0
@@ -757,7 +758,7 @@ def rep_seconds(ctl):
 def test_reports_opens_on_today_with_the_period_focused(ui):
     ctl, window, _ = ui
     open_reports(window)
-    assert (ctl.repKind, ctl.repLabel, ctl.repFocus, ctl.repStepping) == ("day", "Today", 5, False)
+    assert (ctl.repKind, ctl.repLabel, ctl.repFocus, ctl.repStepping) == ("day", "Today", 5, True)   # live: turning changes the day
     assert ctl.repTotal == 0 and [r["name"] for r in ctl.repRows][:2] == ["Work", "Admin"]
     assert not ctl.repCanOlder and not ctl.repCanNewer
 
@@ -774,16 +775,14 @@ def test_reports_show_the_tracked_time_per_project_and_the_total(ui, clock):
     assert ctl.repTotal == 900 == sum(r["seconds"] for r in ctl.repRows)
 
 
-def test_stepping_to_older_periods_stops_at_the_first_entry_and_at_today(ui, clock):
-    ctl, window, db = ui
+def test_turning_goes_to_older_periods_without_a_press_and_stops_at_the_first_entry_and_at_today(ui, clock, db):
+    ctl, window, _ = ui
     track(window, clock, 600)                           # today
     clock.advance(2 * 86400)                            # two days later
     track(window, clock, 120)
     open_reports(window, ctl)
-    assert ctl.repLabel == "Today" and ctl.repCanOlder and not ctl.repCanNewer
-    key(window, Qt.Key.Key_Space)                       # start stepping
-    assert ctl.repStepping
-    key(window, Qt.Key.Key_Left)
+    assert ctl.repLabel == "Today" and ctl.repCanOlder and not ctl.repCanNewer and ctl.repStepping
+    key(window, Qt.Key.Key_Left)                        # no press needed
     assert ctl.repLabel == "Yesterday" and ctl.repTotal == 0
     key(window, Qt.Key.Key_Left)                        # the day with the first entry
     assert rep_seconds(ctl)["Work"] == 600 and not ctl.repCanOlder
@@ -792,8 +791,13 @@ def test_stepping_to_older_periods_stops_at_the_first_entry_and_at_today(ui, clo
     for _ in range(5):
         key(window, Qt.Key.Key_Right)                   # clamps at today
     assert ctl.repLabel == "Today" and not ctl.repCanNewer
-    key(window, Qt.Key.Key_Space)                       # stop stepping
+    key(window, Qt.Key.Key_Space)                       # leave live mode
     assert not ctl.repStepping
+    key(window, Qt.Key.Key_Left)                        # now the outline moves instead
+    assert ctl.repFocus == 4 and ctl.repLabel == "Today"
+    key(window, Qt.Key.Key_Right)
+    key(window, Qt.Key.Key_Space)                       # press the period: live again
+    assert ctl.repStepping
 
 
 def test_week_and_month_kinds_sum_several_days(ui, clock):
@@ -813,9 +817,10 @@ def test_week_and_month_kinds_sum_several_days(ui, clock):
 def test_the_period_label_for_a_week_covers_monday_to_sunday(ui):
     ctl, window, _ = ui
     open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)                                                              # leave live mode
     key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left); key(window, Qt.Key.Key_Left)   # Entries, Month, Week
     key(window, Qt.Key.Key_Space)
-    assert ctl.repKind == "week" and "\u2013" in ctl.repLabel
+    assert ctl.repKind == "week" and "\u2013" in ctl.repLabel and ctl.repStepping and ctl.repFocus == 5
 
 
 def test_a_running_timer_keeps_todays_numbers_moving(ui, clock):
@@ -862,6 +867,7 @@ from datetime import datetime as _dt2
 
 def open_entries(window, ctl):
     open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)                        # leave live period mode
     key(window, Qt.Key.Key_Left)                         # Period -> Entries
     key(window, Qt.Key.Key_Space)
 
@@ -1136,3 +1142,171 @@ def test_status_back_row_returns_to_settings(ui):
     open_status(ctl)
     ctl.tap(0)
     assert ctl.screen == "settings"
+
+
+# -- the grouped entry list on the Reports page --------------------------------------------------------
+
+def seed_report(db, clock):
+    """Today's entries for Work, Admin and Learning (made out of alphabetical and time order)."""
+    work, admin, learning = (p.id for p in db.list_projects()[:3])
+    now = clock()
+    made = []
+    for pid, offset, seconds, note in (
+        (work, 3000, 600, "Quarterly report"),          # 50 min ago
+        (learning, 4000, 300, ""),
+        (admin, 2000, 900, "Expenses and invoices for the whole of October, itemised"),
+        (work, 6000, 1200, ""),                         # earlier than the first Work entry, made later
+    ):
+        db._conn.execute("INSERT INTO entries(project_id, start_ts, end_ts, note) VALUES (?,?,?,?)",
+                         (pid, now - offset, now - offset + seconds, note))
+        made.append(db._conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    return made
+
+
+def headers(ctl):
+    return [i["name"] for i in ctl.repItems if i["kind"] == "header"]
+
+
+def entries_of(ctl):
+    return [i for i in ctl.repItems if i["kind"] == "entry"]
+
+
+def test_the_list_is_grouped_alphabetically_with_entries_earliest_first_and_shows_notes(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    assert headers(ctl) == ["Admin", "Learning", "Work"]
+    kinds = [i["kind"] for i in ctl.repItems]
+    assert kinds == ["header", "entry", "header", "entry", "header", "entry", "entry"]
+    work_entries = entries_of(ctl)[2:]
+    assert [e["note"] for e in work_entries] == ["", "Quarterly report"]       # earliest (no note) first
+    assert work_entries[0]["time"] < work_entries[1]["time"]                  # 'HH:MM-HH:MM' sorts by start in a day
+    admin = entries_of(ctl)[0]
+    assert admin["note"].startswith("Expenses and invoices") and admin["duration"] == "15m 00s"
+    assert [i["total"] for i in ctl.repItems if i["kind"] == "header"] == ["15m 00s", "5m 00s", "30m 00s"]
+    assert [e["k"] for e in entries_of(ctl)] == [0, 1, 2, 3]
+
+
+def test_week_rows_carry_the_date(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    assert not entries_of(ctl)[0]["time"][0].isalpha()                         # day view: just the time
+    ctl.repTap(2)                                                               # Week
+    first = entries_of(ctl)[0]["time"]
+    assert first[:3] in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun") and "–" in first
+
+
+def test_move_mode_walks_the_controls_then_down_the_entries(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)                                               # leave live mode
+    key(window, Qt.Key.Key_Right)
+    assert ctl.repFocus == 6                                                    # the first entry
+    for _ in range(10):
+        key(window, Qt.Key.Key_Right)
+    assert ctl.repFocus == 9                                                    # four entries: 6..9, clamped
+    for _ in range(4):
+        key(window, Qt.Key.Key_Left)
+    assert ctl.repFocus == 5 and not ctl.repStepping
+
+
+def test_live_mode_ignores_the_list_and_only_changes_the_period(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Left)
+    assert ctl.repFocus == 5 and ctl.repStepping
+
+
+def test_pressing_an_entry_opens_the_editor_and_back_returns_to_the_same_place(ui, clock, db):
+    ctl, window, _ = ui
+    ids = seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)
+    for _ in range(3):
+        key(window, Qt.Key.Key_Right)                                           # the third entry (Work, earliest)
+    focus = ctl.repFocus
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "entryedit"
+    work_early = ids[3]                                                         # the 20 minute Work entry
+    assert row_by_id(ctl, "project")["value"] == "Work" and row_by_id(ctl, "end")["value"] != "running"
+    assert ctl._entry_id == work_early
+    key(window, Qt.Key.Key_Left)                                                # Done
+    key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "reports" and ctl.repFocus == focus and not ctl.repStepping
+    assert ctl.repLabel == "Today"
+
+
+def test_editing_an_entry_from_the_report_updates_the_list(ui, clock, db):
+    ctl, window, _ = ui
+    ids = seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)
+    key(window, Qt.Key.Key_Right)                                               # Admin's entry
+    key(window, Qt.Key.Key_Space)
+    for _ in range(3):
+        key(window, Qt.Key.Key_Right)                                           # Note row
+    key(window, Qt.Key.Key_Space)
+    for _ in range(len(ctl.noteText)):
+        ctl.noteBackspace()
+    ctl.noteType("Short")
+    key(window, Qt.Key.Key_Right); key(window, Qt.Key.Key_Space)                # Save
+    ctl.back()
+    assert ctl.screen == "reports" and entries_of(ctl)[0]["note"] == "Short"
+
+
+def test_deleting_an_entry_from_the_report_returns_to_the_report(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)
+    for _ in range(4):
+        key(window, Qt.Key.Key_Right)                                           # the last entry, focus 9
+    key(window, Qt.Key.Key_Space)
+    for _ in range(4):
+        key(window, Qt.Key.Key_Right)                                           # Delete
+    key(window, Qt.Key.Key_Space); key(window, Qt.Key.Key_Space)
+    assert ctl.screen == "reports" and len(entries_of(ctl)) == 3
+    assert ctl.repFocus == 8                                                    # clamped onto the new last entry
+    assert headers(ctl) == ["Admin", "Learning", "Work"]
+
+
+def test_pressing_a_kind_returns_to_live_period_mode(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    key(window, Qt.Key.Key_Space)
+    for _ in range(3):
+        key(window, Qt.Key.Key_Left)                                            # Entries, Month, Week
+    key(window, Qt.Key.Key_Space)
+    assert ctl.repKind == "week" and ctl.repStepping and ctl.repFocus == 5
+    assert len(entries_of(ctl)) == 4
+
+
+def test_tapping_an_entry_opens_the_editor(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_reports(window, ctl)
+    ctl.repTapEntry(1)
+    assert ctl.screen == "entryedit"
+    ctl.back()
+    assert ctl.screen == "reports" and ctl.repFocus == 7 and not ctl.repStepping
+
+
+def test_the_entries_button_still_opens_the_flat_list_and_back_goes_there(ui, clock, db):
+    ctl, window, _ = ui
+    seed_report(db, clock)
+    open_entries(window, ctl)
+    assert ctl.screen == "entries"
+    key(window, Qt.Key.Key_Space)                                               # an entry row
+    assert ctl.screen == "entryedit"
+    ctl.back()
+    assert ctl.screen == "entries"                                              # origin is the flat list, not the report
+
+
+def test_an_empty_period_has_no_items(ui):
+    ctl, window, _ = ui
+    open_reports(window, ctl)
+    assert ctl.repItems == [] and ctl.repTotal == 0
